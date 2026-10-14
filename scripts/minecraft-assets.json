@@ -1,0 +1,62 @@
+[
+  {
+    "file": "book_arrowleft_default.png",
+    "url": "https://raw.githubusercontent.com/Mojang/bedrock-samples/46ba6ea985fb5a92d79a9419198f10dda14c199d/resource_pack/textures/ui/book_arrowleft_default.png",
+    "sha256": "e6de6739ac41bc3eb72f97a77eab596a70cc42582873a294a479b73e71e421e8"
+  },
+  {
+    "file": "book_arrowright_default.png",
+    "url": "https://raw.githubusercontent.com/Mojang/bedrock-samples/46ba6ea985fb5a92d79a9419198f10dda14c199d/resource_pack/textures/ui/book_arrowright_default.png",
+    "sha256": "daaa548d74ec1d044ec15927c8ccd3fceeb595a15f88af861f9c1ada1f43f7a7"
+  },
+  {
+    "file": "book_back.png",
+    "url": "https://raw.githubusercontent.com/Mojang/bedrock-samples/46ba6ea985fb5a92d79a9419198f10dda14c199d/resource_pack/textures/ui/book_back.png",
+    "sha256": "450ee4837e908ba3a9026815a185d2f35752620f9545547dee523c386552f418"
+  },
+  {
+    "file": "book_binding.png",
+    "url": "https://raw.githubusercontent.com/Mojang/bedrock-samples/46ba6ea985fb5a92d79a9419198f10dda14c199d/resource_pack/textures/ui/book_binding.png",
+    "sha256": "a8aa7c69d1916831f315143b231c0a75c3e8ed37885b3e02c5ac6d07d1c3b513"
+  },
+  {
+    "file": "book_cover.png",
+    "url": "https://raw.githubusercontent.com/Mojang/bedrock-samples/46ba6ea985fb5a92d79a9419198f10dda14c199d/resource_pack/textures/ui/book_cover.png",
+    "sha256": "d819b8ab181e8ac3e3a1b268510500fcae9fbab83d4da1c0e1d0b9d2600b5d38"
+  },
+  {
+    "file": "book_frame.png",
+    "url": "https://raw.githubusercontent.com/Mojang/bedrock-samples/46ba6ea985fb5a92d79a9419198f10dda14c199d/resource_pack/textures/ui/book_frame.png",
+    "sha256": "161556489468a5f8d2040c03ca3ec9fffe849196e73243d1371c703fc6b01036"
+  },
+  {
+    "file": "book_pagecrease_left.png",
+    "url": "https://raw.githubusercontent.com/Mojang/bedrock-samples/46ba6ea985fb5a92d79a9419198f10dda14c199d/resource_pack/textures/ui/book_pagecrease_left.png",
+    "sha256": "3970bdabeee0b40b925e2d9766db91f1aa4f927f8dd9b644e3029dc67f96ef24"
+  },
+  {
+    "file": "book_pagecrease_right.png",
+    "url": "https://raw.githubusercontent.com/Mojang/bedrock-samples/46ba6ea985fb5a92d79a9419198f10dda14c199d/resource_pack/textures/ui/book_pagecrease_right.png",
+    "sha256": "20fd22ed3e4f19c95a83fd49dfa4d86104e272fc634e5a52675a4fce48c1eeaa"
+  },
+  {
+    "file": "book_pageedge_left.png",
+    "url": "https://raw.githubusercontent.com/Mojang/bedrock-samples/46ba6ea985fb5a92d79a9419198f10dda14c199d/resource_pack/textures/ui/book_pageedge_left.png",
+    "sha256": "0b1d34903671082eefe05e270b9e810eb2eacdeca9bb22bc845bb4ef673da0e7"
+  },
+  {
+    "file": "book_pageedge_right.png",
+    "url": "https://raw.githubusercontent.com/Mojang/bedrock-samples/46ba6ea985fb5a92d79a9419198f10dda14c199d/resource_pack/textures/ui/book_pageedge_right.png",
+    "sha256": "b1f2b78775d7ee788404e82566d2187ba43559e35b1ff2fa66dcf2d9c9d35671"
+  },
+  {
+    "file": "book_spine.png",
+    "url": "https://raw.githubusercontent.com/Mojang/bedrock-samples/46ba6ea985fb5a92d79a9419198f10dda14c199d/resource_pack/textures/ui/book_spine.png",
+    "sha256": "574abad8bc565244e99d69a522ef8c9cd030604fc6b52d08e773c2c4fb0c50ba"
+  },
+  {
+    "file": "book-icon.png",
+    "url": "https://raw.githubusercontent.com/Mojang/bedrock-samples/46ba6ea985fb5a92d79a9419198f10dda14c199d/resource_pack/textures/items/book_writable.png",
+    "sha256": "fe608c68d2465d427d817b869434301396458b8b15b02dbc29e95964d2f528aa"
+  }
+]

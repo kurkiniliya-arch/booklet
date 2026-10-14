@@ -13,6 +13,7 @@ jobs:
           cache: npm
       - run: npm ci
       - run: node node_modules/electron/install.js
+      - run: npm run prepare:assets
       - run: npm test
       - run: npm run test:e2e
       - run: npm run build

@@ -5,3 +5,6 @@ artifacts/
 coverage/
 *.log
 .DS_Store
+src/renderer/assets/book*.png
+assets/book.png
+assets/book.ico

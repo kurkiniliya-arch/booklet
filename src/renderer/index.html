@@ -4,21 +4,22 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'">
-  <title>Книга квестов</title>
+  <title>Книга проектов</title>
   <link rel="stylesheet" href="styles.css">
 </head>
 <body>
-  <main id="book" class="book" aria-label="Книга квестов">
-    <header class="book-bar"><span class="brand">КНИГА КВЕСТОВ</span><button class="text-button" data-action="close-book">Закрыть книгу</button><span class="bar-space"></span><button class="window-button" data-action="minimize" aria-label="Свернуть окно" title="Свернуть">−</button><button class="window-button" data-action="close" aria-label="Закрыть приложение" title="Закрыть приложение">×</button></header>
+  <main id="book" class="book" aria-label="Книга проектов">
+    <header class="book-bar"><span class="brand">Книга проектов</span><span class="bar-space"></span><button class="window-button" data-action="minimize" aria-label="Свернуть окно" title="Свернуть">−</button><button class="window-button" data-action="close" aria-label="Закрыть приложение" title="Закрыть приложение">×</button></header>
     <div class="pages">
-      <nav class="tabs" aria-label="Разделы книги"><button data-view="journal" aria-current="page">Квесты</button><button data-view="history">Завершённые</button><button data-view="calendar">Календарь</button><button data-view="board">Доска</button><span class="tab-space"></span><button class="add-button" data-action="new-quest">+ Квест</button></nav>
+      <div class="page-art" aria-hidden="true"><i class="paper-edge edge-left"></i><i class="paper-edge edge-right"></i><i class="paper-crease crease-left"></i><i class="paper-crease crease-right"></i></div>
+      <nav class="tabs" aria-label="Разделы книги"><div class="tab-page"><button data-view="journal" aria-current="page">Проекты</button><button data-view="history">История</button></div><div class="tab-page"><button data-view="calendar">Календарь</button><button data-view="board">Доска</button><button class="add-button" data-action="new-quest" title="Добавить задание">+ Задание</button></div></nav>
       <div id="content" class="content"></div>
-      <footer class="book-footer"><button id="connection" class="connection" data-action="choose-vault" title="Выбрать хранилище Obsidian">Подключение…</button><button class="text-button" data-action="refresh" title="Перечитать заметки Obsidian">↻ Обновить</button><span id="summary" class="footer-summary"></span></footer>
+      <footer class="book-footer"><div class="footer-page"><button class="page-arrow previous" data-action="previous-page" aria-label="Предыдущий раздел" title="Предыдущий раздел"></button><button id="connection" class="connection" data-action="choose-vault" title="Выбрать хранилище Obsidian">Подключение…</button><button class="text-button refresh-button" data-action="refresh" title="Перечитать заметки Obsidian" aria-label="Обновить книгу">↻</button></div><div class="footer-page"><span id="summary" class="footer-summary"></span><button class="text-button close-book-button" data-action="close-book">Закрыть книгу</button><button class="page-arrow next" data-action="next-page" aria-label="Следующий раздел" title="Следующий раздел"></button></div></footer>
     </div>
     <div id="notice" class="notice" role="status" hidden></div>
   </main>
   <section id="cover-stage" class="cover-stage" hidden aria-label="Закрытая книга">
-    <div class="cover"><div class="cover-bar"><span class="brand">КНИГА КВЕСТОВ</span><button class="window-button" data-action="minimize" aria-label="Свернуть окно">−</button><button class="window-button" data-action="close" aria-label="Закрыть приложение">×</button></div><div class="cover-border"><div class="book-emblem" aria-hidden="true"><span></span></div><h1>Книга<br>квестов</h1><p id="cover-summary">Твои дела. Свой темп.</p><button class="button primary" data-action="open-book">Открыть книгу →</button></div><div class="cover-spine" aria-hidden="true"></div></div>
+    <div class="cover"><div class="cover-bar"><span class="brand">Книга проектов</span><button class="window-button" data-action="minimize" aria-label="Свернуть окно">−</button><button class="window-button" data-action="close" aria-label="Закрыть приложение">×</button></div><div class="cover-border"><div class="book-emblem" aria-hidden="true"><span></span></div><h1>Книга<br>проектов</h1><p id="cover-summary">Твои дела. Свой темп.</p><button class="button primary" data-action="open-book">Открыть книгу →</button></div><div class="cover-spine" aria-hidden="true"></div></div>
   </section>
   <dialog id="editor" aria-labelledby="dialog-title"><div id="dialog-content"></div></dialog>
   <div id="announcer" class="sr-only" aria-live="polite"></div>

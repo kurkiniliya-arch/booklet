@@ -267,7 +267,7 @@ test('group description edits change readable body and honor later manual body c
   const f = await fixture(t);
   let state = await f.dispatch('project.create',{title:'Хобби',description:'Первое описание'});
   const project = state.projects.find(value => value.title === 'Хобби');
-  const source = path.join(f.vault,'Хобби','Квесты.md');
+  const source = path.join(f.vault,'Хобби','Задания.md');
   await fs.appendFile(source,'\nМой независимый текст.\n','utf8');
   state = await f.dispatch('project.update',{id:project.id,title:'Хобби',description:'Второе описание'});
   let raw = await fs.readFile(source,'utf8');

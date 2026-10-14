@@ -1,26 +1,30 @@
 {
   "name": "quest-book",
-  "version": "0.1.0",
-  "description": "Личная книга квестов с Obsidian, календарём и Kanban",
+  "version": "0.2.0",
+  "description": "Личная книга проектов с Obsidian, календарём и Kanban",
   "main": "src/main.cjs",
   "private": true,
   "author": "kurkiniliya-arch",
   "license": "UNLICENSED",
   "scripts": {
+    "prepare:assets": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/prepare-assets.ps1",
+    "prestart": "npm run prepare:assets",
     "start": "electron .",
     "test": "node --test test/*.test.cjs",
     "test:e2e": "node test/e2e.cjs",
+    "prebuild": "npm run prepare:assets",
     "build": "electron-builder --win portable --publish never",
+    "prebuild:dir": "npm run prepare:assets",
     "build:dir": "electron-builder --win --dir --publish never"
   },
   "dependencies": { "yaml": "2.9.1" },
   "devDependencies": { "electron": "44.7.2", "electron-builder": "26.15.3", "playwright": "1.62.1" },
   "build": {
     "appId": "com.kurkiniliya.questbook",
-    "productName": "Quest Book",
+    "productName": "Project Book",
     "directories": { "output": "dist" },
     "files": ["src/**/*", "assets/**/*", "package.json"],
     "asar": true,
-    "win": { "target": [{"target":"portable","arch":["x64"]}], "icon": "assets/book.ico", "signAndEditExecutable": true, "artifactName": "Quest-Book-${version}-${arch}.${ext}" }
+    "win": { "target": [{"target":"portable","arch":["x64"]}], "icon": "assets/book.ico", "signAndEditExecutable": true, "artifactName": "Project-Book-${version}-${arch}.${ext}" }
   }
 }

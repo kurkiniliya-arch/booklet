@@ -217,8 +217,8 @@ class QuestStore {
     const indexRaw = await this._readOptional(INDEX_PATH);
     let index = null;
     if (indexRaw !== null) {
-      try { const parsed = JSON.parse(indexRaw); if (parsed.schema_version === 3 && Array.isArray(parsed.projects)) index = parsed; else warnings.push('Индекс.json имеет другой формат: квесты читаются из Markdown, старый индекс не изменяется.'); }
-      catch { warnings.push('Индекс.json повреждён: квесты читаются из Markdown, старый индекс не изменяется.'); }
+      try { const parsed = JSON.parse(indexRaw); if (parsed.schema_version === 3 && Array.isArray(parsed.projects)) index = parsed; else warnings.push('Индекс.json имеет другой формат: задания читаются из Markdown, старый индекс не изменяется.'); }
+      catch { warnings.push('Индекс.json повреждён: задания читаются из Markdown, старый индекс не изменяется.'); }
     }
     let metadata = null;
     if (metadataRaw !== null) {
@@ -364,8 +364,8 @@ class QuestStore {
       if (await this._readOptional(project.notePath) !== null) fail('Заметка проекта не может быть безопасно изменена.', 'INVALID_MARKDOWN');
     }
     if (EXCLUDED_ROOTS.has(safeName(project.title).toLocaleLowerCase('ru'))) fail('Это название зарезервировано для служебной или рабочей папки. Выберите другое название.');
-    let relative = project.notePath || `${safeName(project.title)}/Квесты.md`;
-    if (!project.notePath && await this._readOptional(relative) !== null) relative = `${safeName(project.title)}/Квесты ${hash(project.id).slice(0,8)}.md`;
+    let relative = project.notePath || `${safeName(project.title)}/Задания.md`;
+    if (!project.notePath && await this._readOptional(relative) !== null) relative = `${safeName(project.title)}/Задания ${hash(project.id).slice(0,8)}.md`;
     if (await this._readOptional(relative) !== null) fail('Невозможно создать заметку проекта: имя занято.', 'CONFLICT');
     const raw = `---\nid: ${JSON.stringify(`quest-book-${project.id}`)}\nquest_book_project: ${JSON.stringify(project.id)}\nquest_book_title: ${JSON.stringify(project.title)}\nquest_book_description: ${JSON.stringify(project.description || '')}\n---\n\n# ${project.title}\n\n<!-- quest-book:description:start -->\n${project.description || ''}\n<!-- quest-book:description:end -->\n`;
     const note = parseNote(relative,raw);

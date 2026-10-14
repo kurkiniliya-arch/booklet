@@ -14,8 +14,9 @@ const arg = name => {
   return inline ? inline.slice(name.length + 3) : undefined;
 };
 const testMode = process.argv.includes('--test-mode');
-if (arg('user-data-dir')) app.setPath('userData', path.resolve(arg('user-data-dir')));
-app.setName('Quest Book');
+// Keep the existing profile when the visible product name changes.
+app.setPath('userData', arg('user-data-dir') ? path.resolve(arg('user-data-dir')) : path.join(app.getPath('appData'), 'Quest Book'));
+app.setName('Книга проектов');
 app.setAppUserModelId('com.kurkiniliya.questbook');
 protocol.registerSchemesAsPrivileged([{ scheme: 'questbook', privileges: { standard: true, secure: true, supportFetchAPI: true, corsEnabled: true } }]);
 
@@ -129,7 +130,7 @@ function rpc(channel, work) {
 function windowSize(open) {
   const display = mainWindow ? screen.getDisplayMatching(mainWindow.getBounds()) : screen.getPrimaryDisplay();
   const width = Math.min(open ? 1140 : 410, display.workAreaSize.width - 24);
-  const height = Math.min(open ? 810 : 580, display.workAreaSize.height - 24);
+  const height = Math.min(open ? 750 : 580, display.workAreaSize.height - 24);
   return { width: Math.max(320, width), height: Math.max(400, height), display };
 }
 function resizeBook(open) {
@@ -181,7 +182,7 @@ async function createWindow() {
   mainWindow = new BrowserWindow({
     width, height, frame: false, transparent: true, backgroundColor: '#00000000',
     resizable: false, maximizable: false, fullscreenable: false, hasShadow: false,
-    title: 'Книга квестов', icon: path.join(__dirname, '../assets/book.png'), show: false,
+    title: 'Книга проектов', icon: path.join(__dirname, '../assets/book.png'), show: false,
     webPreferences: { preload: path.join(__dirname, 'preload.cjs'), nodeIntegration: false, contextIsolation: true, sandbox: true, webSecurity: true, spellcheck: false }
   });
   mainWindow.removeMenu();
@@ -219,7 +220,7 @@ else {
     installHandlers();
     await createWindow();
     app.on('activate', () => { if (!BrowserWindow.getAllWindows().length) createWindow(); });
-  }).catch(error => { dialog.showErrorBox('Книга квестов', error.message); app.exit(1); });
+  }).catch(error => { dialog.showErrorBox('Книга проектов', error.message); app.exit(1); });
   app.on('window-all-closed', () => app.quit());
   app.on('before-quit', event => {
     if (closing) return;

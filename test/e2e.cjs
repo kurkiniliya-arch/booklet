@@ -200,7 +200,7 @@ async function uiSmoke() {
   const initialBounds = await book.boundingBox();
   const windowBounds = await application.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].getBounds());
   assert.ok(initialBounds.width > 500 && initialBounds.height > 300);
-  for (const name of ['Завершённые', 'Календарь', 'Доска', 'Квесты']) {
+  for (const name of ['История', 'Календарь', 'Доска', 'Проекты']) {
     await page.getByRole('button', { name, exact: true }).click();
     const bounds = await book.boundingBox();
     assert.equal(bounds.width, initialBounds.width, `${name}: book width must stay fixed`);
@@ -237,18 +237,18 @@ async function uiSmoke() {
   assert.equal((await state()).projects.find(item => item.id === project.id).description, 'Изменённое описание направления.');
 
   await page.locator('[data-action="new-quest"]').click();
-  await page.getByLabel('Название', { exact: true }).fill('Интерфейсный квест');
-  await page.getByRole('textbox', { name: 'Описание', exact: true }).fill('Первое описание квеста.\nВторая строка.');
+  await page.getByLabel('Название', { exact: true }).fill('Интерфейсное задание');
+  await page.getByRole('textbox', { name: 'Описание', exact: true }).fill('Первое описание задания.\nВторая строка.');
   await page.locator('#edit-project').selectOption(project.id);
-  await page.getByLabel('Срочный квест', { exact: true }).check();
+  await page.getByLabel('Срочное задание', { exact: true }).check();
   assert.equal(await page.getByLabel(/Повторение|Периодичность/).count(), 0, 'no recurrence editor');
   await saveEditor();
-  let quest = (await state()).quests.find(item => item.title === 'Интерфейсный квест');
+  let quest = (await state()).quests.find(item => item.title === 'Интерфейсное задание');
   assert.ok(quest?.urgent);
   await page.locator(`[data-edit-quest="${quest.id}"]`).click();
-  await page.getByRole('textbox', { name: 'Описание', exact: true }).fill('Новое описание квеста.\nЕщё одна строка.');
+  await page.getByRole('textbox', { name: 'Описание', exact: true }).fill('Новое описание задания.\nЕщё одна строка.');
   await saveEditor();
-  assert.equal((await state()).quests.find(item => item.id === quest.id).description, 'Новое описание квеста.\nЕщё одна строка.');
+  assert.equal((await state()).quests.find(item => item.id === quest.id).description, 'Новое описание задания.\nЕщё одна строка.');
   await page.locator(`[data-urgent="${quest.id}"]`).click();
   await eventually(async () => !(await state()).quests.find(item => item.id === quest.id).urgent, 'urgency cleared in UI');
   await page.locator(`[data-urgent="${quest.id}"]`).click();
@@ -261,13 +261,13 @@ async function uiSmoke() {
   planned.setUTCDate(planned.getUTCDate() + 1);
   const tomorrow = planned.toISOString().slice(0, 10);
   await page.locator('[data-action="schedule-existing"]').click();
-  await page.locator('#schedule-search').fill('Интерфейсный квест');
+  await page.locator('#schedule-search').fill('Интерфейсное задание');
   await page.locator(`input[name="questId"][value="${quest.id}"]`).check();
   await page.getByLabel('День выполнения', { exact: true }).fill(tomorrow);
   await page.locator('#schedule-form button[type="submit"]').click();
   await page.locator('#editor').waitFor({ state: 'hidden' });
   assert.equal((await state()).quests.find(item => item.id === quest.id).plannedDate, tomorrow);
-  assert.ok(await page.locator(`.calendar-day[data-day="${tomorrow}"]`).innerText().then(value => value.includes('Интерфейсный квест')));
+  assert.ok(await page.locator(`.calendar-day[data-day="${tomorrow}"]`).innerText().then(value => value.includes('Интерфейсное задание')));
   await screenshot('calendar.png');
 
   await page.locator('[data-view="board"]').click();
@@ -294,7 +294,7 @@ async function uiSmoke() {
   await eventually(async () => (await state()).quests.find(item => item.id === quest.id).status !== 'done', 'undo completion from history');
 
   await page.locator('[data-view="journal"]').click();
-  await page.locator('#journal-search').fill('Интерфейсный квест');
+  await page.locator('#journal-search').fill('Интерфейсное задание');
   await page.locator(`[data-quest="${quest.id}"]`).click();
   await page.locator(`[data-delete-quest="${quest.id}"]`).click();
   await page.locator('[data-action="confirm-delete"]').click();

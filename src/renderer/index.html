@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'">
+  <title>Книга квестов</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <main id="book" class="book" aria-label="Книга квестов">
+    <header class="book-bar"><span class="brand">КНИГА КВЕСТОВ</span><button class="text-button" data-action="close-book">Закрыть книгу</button><span class="bar-space"></span><button class="window-button" data-action="minimize" aria-label="Свернуть окно" title="Свернуть">−</button><button class="window-button" data-action="close" aria-label="Закрыть приложение" title="Закрыть приложение">×</button></header>
+    <div class="pages">
+      <nav class="tabs" aria-label="Разделы книги"><button data-view="journal" aria-current="page">Квесты</button><button data-view="history">Завершённые</button><button data-view="calendar">Календарь</button><button data-view="board">Доска</button><span class="tab-space"></span><button class="add-button" data-action="new-quest">+ Квест</button></nav>
+      <div id="content" class="content"></div>
+      <footer class="book-footer"><button id="connection" class="connection" data-action="choose-vault" title="Выбрать хранилище Obsidian">Подключение…</button><button class="text-button" data-action="refresh" title="Перечитать заметки Obsidian">↻ Обновить</button><span id="summary" class="footer-summary"></span></footer>
+    </div>
+    <div id="notice" class="notice" role="status" hidden></div>
+  </main>
+  <section id="cover-stage" class="cover-stage" hidden aria-label="Закрытая книга">
+    <div class="cover"><div class="cover-bar"><span class="brand">КНИГА КВЕСТОВ</span><button class="window-button" data-action="minimize" aria-label="Свернуть окно">−</button><button class="window-button" data-action="close" aria-label="Закрыть приложение">×</button></div><div class="cover-border"><div class="book-emblem" aria-hidden="true"><span></span></div><h1>Книга<br>квестов</h1><p id="cover-summary">Твои дела. Свой темп.</p><button class="button primary" data-action="open-book">Открыть книгу →</button></div><div class="cover-spine" aria-hidden="true"></div></div>
+  </section>
+  <dialog id="editor" aria-labelledby="dialog-title"><div id="dialog-content"></div></dialog>
+  <div id="announcer" class="sr-only" aria-live="polite"></div>
+  <script src="app.js"></script>
+</body>
+</html>

@@ -51,3 +51,90 @@ button,input,textarea,select{font-family:Unifont,monospace;font-variant-ligature
 .book:before{border-image-slice:20 fill}
 .cover{border-image-slice:13 fill}
 .book:after{left:calc(50% - 4px);width:8px;background-size:8px 1px}
+
+/* Cloth bookmarks sit outside the spread; their names remain upright. */
+.book{inset:44px 12px 12px;overflow:visible}
+.pages{container-type:size}
+.book-bar{top:23px}
+.book-bar .add-button{margin-right:19px;color:#8b7754;font-size:16px;line-height:1.4}
+.content{padding-top:45px}
+.tabs.bookmarks{position:absolute;z-index:5;top:-34px;left:72px;right:auto;display:flex;align-items:flex-start;gap:12px;height:53px;padding:0;background:transparent;overflow:visible}
+.tabs.bookmarks button{--cloth:#aab19a;--thread:#777e67;position:relative;min-width:120px;height:50px;padding:7px 16px 15px;border:0;background:var(--cloth);color:#414437;font-size:16px;line-height:22px;font-weight:400;text-align:center;box-shadow:inset 2px 0 #ffffff2b,inset -2px 0 #00000018,inset 0 2px #ffffff33;clip-path:polygon(0 0,100% 0,100% calc(100% - 3px),calc(100% - 3px) calc(100% - 3px),calc(100% - 3px) 100%,calc(50% + 11px) 100%,50% calc(100% - 7px),calc(50% - 11px) 100%,3px 100%,3px calc(100% - 3px),0 calc(100% - 3px));text-shadow:0 1px #ffffff30}
+.tabs.bookmarks button:before{content:"";position:absolute;left:6px;right:6px;top:5px;bottom:11px;border-left:1px dashed #ffffff33;border-right:1px dashed #00000016;pointer-events:none}
+.tabs.bookmarks button[data-view=history]{--cloth:#baa5a0;--thread:#8a716a;color:#503d38}
+.tabs.bookmarks button[data-view=calendar]{--cloth:#b9b098;--thread:#8b7f62;color:#51482f}
+.tabs.bookmarks button[data-view=board]{--cloth:#a0afb4;--thread:#6b818a;color:#35464e}
+.tabs.bookmarks button:hover{background:var(--cloth);filter:brightness(1.06);transform:translateY(-2px)}
+.tabs.bookmarks button[aria-current=page]{height:55px;transform:translateY(-5px);background:var(--cloth);color:#302f26;box-shadow:inset 3px 0 #ffffff4a,inset -3px 0 #00000022,inset 0 3px #ffffff55;text-shadow:0 1px #ffffff50}
+.tabs.bookmarks button[aria-current=page]:after{content:"";position:absolute;left:16px;right:16px;bottom:14px;height:2px;background:var(--thread)}
+.tabs.bookmarks button:focus-visible{outline:0;filter:brightness(1.12);box-shadow:inset 0 0 0 3px #4a4937}
+.page-art{left:50%;top:50%;right:auto;bottom:auto;width:100%;height:100%;transform:translate(-50%,-50%)}
+
+/* The board opens vertically: general list above, selected work below. */
+.board-layout{display:grid;grid-template-rows:50% 50%;height:100%;min-height:0;overflow:hidden}
+.backlog-page,.board-page{display:flex;flex-direction:column;min-width:0;min-height:0;padding:7px 35px 13px}
+.backlog-page>.page-heading,.board-page>.page-heading{flex:none;min-height:27px;gap:16px;margin:0 0 8px}
+.backlog-page>.page-heading h2,.board-page>.page-heading h2{font-size:20px;line-height:1.3}
+.backlog-page>.page-heading .caption,.board-page>.page-heading .caption{font-size:16px}
+.backlog-page .filter-line{padding:0 0 9px;gap:14px;flex-wrap:nowrap;min-width:0}
+.backlog-page .filter-line .search{height:30px;max-width:290px;flex:1}
+.backlog-page .filter-line .small-select{height:30px;max-width:230px}
+.backlog-page .filter-line .caption{font-size:16px;white-space:nowrap}
+.backlog-list{flex:1;min-height:0;overflow:auto;overscroll-behavior:contain;scrollbar-gutter:stable;padding-right:7px}
+.backlog-row{display:flex;align-items:center;gap:18px;min-height:41px;border-top:1px solid #e4dcc7;padding:7px 7px;cursor:grab;transition:background-color .12s ease}
+.backlog-row:hover{background:#eee5cc88}
+.backlog-row:active{cursor:grabbing}
+.backlog-row.dragging{opacity:.45}
+.backlog-row .card-open,.backlog-title{flex:1;min-width:0;font-size:16px;line-height:1.3;text-align:left;overflow-wrap:anywhere}
+.backlog-row .caption,.backlog-project{flex:none;max-width:250px;color:#a08f6d;font-size:16px;line-height:1.3;text-align:right;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.backlog-row>.text-button,.backlog-row>.button{flex:none;min-height:28px;margin:0;padding:3px 8px;font-size:16px;white-space:nowrap}
+.backlog-row .badge{flex:none;margin:0}
+.backlog-row .drag-handle{flex:none;color:#b5a788;font-size:16px}
+.backlog-page .empty{padding:15px 7px}
+.board-page{padding-top:17px;padding-bottom:0}
+.board-page .board{padding:3px 0 0;gap:21px}
+.board-page .board-column{padding:9px 0 0}
+.board-page .board-heading{font-size:16px;line-height:1.3;margin-bottom:10px}
+.board-page .board-list{padding-right:5px}
+.board-page .board-card{padding:9px 11px;margin-bottom:10px}
+.board-page .board-card .caption{margin:4px 0 7px}
+.board-page .board-card .card-bottom{gap:6px;flex-wrap:nowrap}
+.board-page .board-card .small-select{height:28px}
+.board-page .board-card .card-bottom .caption{margin:0}
+.board-page .board-empty{padding:17px 10px}
+.book.board-mode:after{top:calc(50% - 10.5px);bottom:auto;left:0;right:0;width:100%;height:8px;background:linear-gradient(180deg,#472c1a 0 1px,#563926 1px 2px,#5c3f2c 2px 6px,#563926 6px 7px,#472c1a 7px 8px)}
+.book.board-mode .page-art{width:100cqh;height:100cqw;transform:translate(-50%,-50%) rotate(90deg)}
+.book.board-mode .pages:after{top:calc(50% - 1.5px);bottom:auto;left:50%;width:10px;height:100cqw;transform:translate(-50%,-50%) rotate(90deg);opacity:1}
+.book.board-mode .book-footer{position:relative;background:transparent}
+
+.backlog-row .backlog-title{display:grid;grid-template-columns:minmax(0,1fr) minmax(130px,240px);align-items:center;gap:20px}
+.backlog-row .backlog-project{display:block;max-width:none}
+.backlog-selected{flex:none;min-width:96px;padding:3px 8px;color:#8e9875;font-size:16px;text-align:right;white-space:nowrap}
+.backlog-row.on-board .card-open{color:#8f927b}
+.backlog-page.drag-over{outline:2px dashed #a0ab7b;outline-offset:-8px;background:#e3e7cb44}
+.board-page .board-remove{font-size:16px;white-space:nowrap}
+.backlog-page h2 .count,.board-page h2 .count{margin-left:9px}
+
+@media(max-width:980px){
+ .book{inset:42px 8px 8px}
+ .tabs.bookmarks{left:56px;gap:9px}
+ .tabs.bookmarks button{min-width:105px;padding-left:12px;padding-right:12px}
+ .book-bar{left:42px;right:31px;top:21px}
+ .book-bar .add-button{margin-right:12px}
+ .backlog-page,.board-page{padding-left:25px;padding-right:25px}
+ .backlog-page .filter-line{gap:10px}
+ .backlog-page .filter-line .caption{display:none}
+ .backlog-page .filter-line .small-select{max-width:200px}
+ .backlog-row{gap:11px}
+ .backlog-row .caption,.backlog-project{max-width:180px}
+ .board-page .board{gap:14px}
+}
+@media(prefers-reduced-motion:no-preference){
+ .tabs.bookmarks button{transition:height .15s ease,transform .15s ease,filter .15s ease}
+ .page-art{transition:transform .32s ease,width .32s ease,height .32s ease}
+ .book.board-mode .board-layout{animation:board-appear .23s ease-out}
+ @keyframes board-appear{from{opacity:.3;transform:translateY(5px)}to{opacity:1;transform:translateY(0)}}
+}
+@media(prefers-reduced-motion:reduce){.page-art,.tabs.bookmarks button,.backlog-row{transition:none!important}.board-layout{animation:none!important}}
+
+@media(max-width:980px){.backlog-row .backlog-title{grid-template-columns:minmax(0,1fr) minmax(110px,180px);gap:12px}.backlog-page>.page-heading .caption,.board-page>.page-heading .caption{font-size:14px}}

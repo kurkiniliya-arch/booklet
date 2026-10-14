@@ -146,6 +146,7 @@ async function apiRoundTrip() {
   current = await dispatch('quest.create', { projectId: project.id, title: 'Новое задание', description: 'Первое описание.', urgent: false, plannedDate: null, dueDate: null });
   const quest = current.quests.find(q => q.projectId === project.id);
   assert.ok(quest);
+  assert.equal(quest.onBoard, false, 'new tasks start outside the board');
   const plannedDate = '2026-11-12';
   current = await dispatch('quest.update', { id: quest.id, title: 'Обновлённое задание', description: 'Редактированное описание.\nСледующая строка.', urgent: true, plannedDate, dueDate: '2026-11-13' });
   assert.equal(current.quests.find(q => q.id === quest.id).urgent, true);
@@ -159,7 +160,7 @@ async function apiRoundTrip() {
   current = await dispatch('completion.undo', { id: completion.id });
   assert.notEqual(current.quests.find(q => q.id === quest.id).status, 'done');
   assert.equal(current.completions.filter(c => c.questId === quest.id).length, 0);
-  await dispatch('quest.status', { id: quest.id, status: 'in_progress' });
+  await dispatch('quest.board', { id: quest.id, onBoard: true, status: 'in_progress' });
   await application.close();
   application = null;
   await launch();
@@ -171,6 +172,7 @@ async function apiRoundTrip() {
   assert.equal(reloaded.plannedDate, plannedDate);
   assert.equal(reloaded.dueDate, '2026-11-13');
   assert.equal(reloaded.status, 'in_progress');
+  assert.equal(reloaded.onBoard, true, 'board selection survives desktop restart');
   current = await dispatch('quest.delete', { id: quest.id });
   assert.equal(current.quests.some(q => q.id === quest.id), false);
   current = await dispatch('project.delete', { id: project.id });
@@ -206,6 +208,8 @@ async function uiSmoke() {
     assert.equal(bounds.width, initialBounds.width, `${name}: book width must stay fixed`);
     assert.equal(bounds.height, initialBounds.height, `${name}: book height must stay fixed`);
   }
+  const bookmarkBounds = await page.locator('[data-view="journal"]').boundingBox();
+  assert.ok(bookmarkBounds.y >= 0 && bookmarkBounds.y < initialBounds.y, 'bookmarks protrude above the cover and stay within the window');
   const docSize = await page.evaluate(() => ({
     height: document.documentElement.scrollHeight,
     width: document.documentElement.scrollWidth,
@@ -271,16 +275,47 @@ async function uiSmoke() {
   await screenshot('calendar.png');
 
   await page.locator('[data-view="board"]').click();
+  assert.equal(await book.evaluate(element => element.classList.contains('board-mode')), true);
+  assert.equal(await page.locator('.board-card').count(), 0, 'existing tasks do not automatically fill the board');
+  assert.ok(await page.locator('.backlog-list').evaluate(element => element.scrollHeight > element.clientHeight), 'backlog scrolls inside the upper page');
+  const upper = await page.locator('.backlog-page').boundingBox();
+  const lower = await page.locator('.board-page').boundingBox();
+  assert.ok(lower.y >= upper.y + upper.height - 1 && Math.abs(lower.x - upper.x) < 1, 'board pages are stacked vertically');
   await page.locator('#board-project').selectOption(project.id);
+  await page.locator(`[data-board-add="${quest.id}"]`).click();
+  await eventually(async () => (await state()).quests.find(item => item.id === quest.id).onBoard, 'button selects a task for the board');
+  assert.equal(await page.locator(`.board-column[data-status="todo"] [data-drag-quest="${quest.id}"]`).count(), 1);
   await page.locator(`[data-status-quest="${quest.id}"]`).selectOption('in_progress');
   await eventually(async () => (await state()).quests.find(item => item.id === quest.id).status === 'in_progress', 'Kanban status selector moves a card');
-  const card = page.locator(`[data-drag-quest="${quest.id}"]`);
+  await page.locator(`[data-board-remove="${quest.id}"]`).click();
+  await eventually(async () => !(await state()).quests.find(item => item.id === quest.id).onBoard, 'removing a card preserves the task');
+  let preserved = (await state()).quests.find(item => item.id === quest.id);
+  assert.equal(preserved.status, 'in_progress');
+  assert.equal(preserved.plannedDate, tomorrow);
+  await page.locator(`.backlog-row[data-drag-quest="${quest.id}"]`).dragTo(page.locator('.board-column[data-status="todo"]'));
+  await eventually(async () => { const item = (await state()).quests.find(item => item.id === quest.id); return item.onBoard && item.status === 'todo'; }, 'backlog drag atomically selects and places a task');
+  await page.locator(`.board-card[data-drag-quest="${quest.id}"]`).dragTo(page.locator('.backlog-page'));
+  await eventually(async () => !(await state()).quests.find(item => item.id === quest.id).onBoard, 'dragging back removes only board membership');
+  await page.locator(`[data-board-add="${quest.id}"]`).click();
+  await eventually(async () => (await state()).quests.find(item => item.id === quest.id).onBoard, 'task can be selected again');
+  await page.locator('[data-action="close-book"]').click();
+  await page.locator('#cover-stage').waitFor({ state: 'visible' });
+  await page.locator('[data-action="open-book"]').click();
+  assert.equal(await book.evaluate(element => element.classList.contains('board-mode')), true, 'opening the cover returns to the board orientation');
+  const card = page.locator(`.board-card[data-drag-quest="${quest.id}"]`);
   await card.dragTo(page.locator('.board-column[data-status="done"]'));
   await eventually(async () => (await state()).quests.find(item => item.id === quest.id).status === 'done', 'Kanban drag moves a card to done');
   assert.equal(await page.locator(`.board-column[data-status="done"] [data-drag-quest="${quest.id}"]`).count(), 1);
+  assert.equal(await page.locator(`.backlog-row[data-drag-quest="${quest.id}"]`).count(), 0, 'completed tasks leave the open backlog');
+  await page.locator('#board-project').selectOption('');
   await screenshot('board.png');
+  await page.locator(`[data-board-remove="${quest.id}"]`).click();
+  await eventually(async () => !(await state()).quests.find(item => item.id === quest.id).onBoard, 'completed cards can be cleared from the board');
+  assert.equal((await state()).quests.find(item => item.id === quest.id).status, 'done');
+  assert.equal((await state()).completions.filter(item => item.questId === quest.id).length, 1, 'clearing a done card preserves history');
 
   await page.locator('[data-view="history"]').click();
+  assert.equal(await book.evaluate(element => element.classList.contains('board-mode')), false, 'leaving the board restores facing pages');
   await page.locator('#history-project').selectOption(project.id);
   assert.equal(await page.locator('[data-completion]').count(), 1);
   await page.locator('#history-from').fill(tomorrow);

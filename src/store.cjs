@@ -68,7 +68,7 @@ function setDetail(note, id, update) {
   ensureDoc(note);
   const current = asObject(note.doc.getIn(['task_details', id], true)?.toJSON());
   for (const [key, value] of Object.entries(update)) current[key] = value;
-  note.doc.setIn(['task_details', id], current);
+  note.doc.setIn(['task_details', id], note.doc.createNode(current));
 }
 function parseNote(relative, raw) {
   const bom = raw.startsWith('\uFEFF') ? '\uFEFF' : '';
@@ -277,7 +277,7 @@ class QuestStore {
       const project = metadata.projects.find(value => value.id === item.projectId);
       const note = scan.notes.find(value => value.id === item.sourceId) || await this._groupNote(project, scan, writes);
       const now = this.now().toISOString();
-      appendTask(note, id, text(item.title,'Название',{required:true,max:1000}), {description:typeof item.description === 'string' ? item.description : '',status:'todo',urgent:false,plannedDate:null,dueDate:null,createdAt:now,updatedAt:now,completedAt:null,recurrence:recurrence(item.recurrence)});
+      appendTask(note, id, text(item.title,'Название',{required:true,max:1000}), {description:typeof item.description === 'string' ? item.description : '',status:'todo',onBoard:false,urgent:false,plannedDate:null,dueDate:null,createdAt:now,updatedAt:now,completedAt:null,recurrence:recurrence(item.recurrence)});
       writes.set(note.relative,{original:note.raw,content:noteContent(note)});
       metadata.questProjects[id] = project.id;
     }
@@ -315,7 +315,7 @@ class QuestStore {
         const observation = asObject(asObject(metadata.taskObservations)[task.id]);
         const doneAt = task.checked && observation.invalidCompletedAt !== detail.completedAt ? iso(detail.completedAt) : null;
         const sourceDescription = taskDescription(note,detail);
-        quests.push({id:task.id,projectId,title:typeof override.title === 'string' && override.sourceTitle === task.title ? override.title : task.title,description:typeof detail.description === 'string' ? detail.description : typeof override.description === 'string' && override.sourceDescription === sourceDescription ? override.description : sourceDescription,status,urgent:detail.urgent === true,plannedDate:validDate(detail.plannedDate) ? detail.plannedDate : null,dueDate:validDate(detail.dueDate) ? detail.dueDate : validDate(detail.deadline) ? detail.deadline : null,createdAt:iso(detail.createdAt),updatedAt:iso(detail.updatedAt),completedAt:doneAt,sourcePath:note.relative,recurrence:recurrence(detail.recurrence)});
+        quests.push({id:task.id,projectId,title:typeof override.title === 'string' && override.sourceTitle === task.title ? override.title : task.title,description:typeof detail.description === 'string' ? detail.description : typeof override.description === 'string' && override.sourceDescription === sourceDescription ? override.description : sourceDescription,status,onBoard:detail.onBoard === true,urgent:detail.urgent === true,plannedDate:validDate(detail.plannedDate) ? detail.plannedDate : null,dueDate:validDate(detail.dueDate) ? detail.dueDate : validDate(detail.deadline) ? detail.deadline : null,createdAt:iso(detail.createdAt),updatedAt:iso(detail.updatedAt),completedAt:doneAt,sourcePath:note.relative,recurrence:recurrence(detail.recurrence)});
       }
     }
     const projects = metadata.projects.filter(project => !metadata.deletedProjectIds.includes(project.id)).map(project => {
@@ -412,6 +412,24 @@ class QuestStore {
       }
       return result;
     };
+    const changeStatus = ({quest,note,task}, status) => {
+      if (quest.status === status && !(quest.recurrence && status === 'done')) return false;
+      if (quest.recurrence && status === 'done') {
+        const nextDate = plusDays(localDate(stamp),quest.recurrence.intervalDays);
+        const previousEvent = metadata.completions.filter(value => value.questId === quest.id && value.kind === 'recurrence').at(-1);
+        const event = {id:`completion-${crypto.randomUUID()}`,questId:quest.id,projectId:quest.projectId,title:quest.title,description:quest.description,completedAt:now,kind:'recurrence',previousCompletionId:previousEvent?.id || null,previousRecurrence:quest.recurrence,previousPlannedDate:quest.plannedDate,previousStatus:quest.status};
+        metadata.completions.push(event);
+        editCheckbox(note,task,{checked:false});
+        setDetail(note,quest.id,{status:'todo',completedAt:null,updatedAt:now,plannedDate:nextDate,recurrence:{...quest.recurrence,nextDate,lastCompletedAt:now}});
+      } else {
+        metadata.completions = metadata.completions.filter(event => !(event.questId === quest.id && event.kind === 'quest'));
+        if (status === 'done') metadata.completions.push({id:`completion-${crypto.randomUUID()}`,questId:quest.id,projectId:quest.projectId,title:quest.title,description:quest.description,completedAt:now,kind:'quest'});
+        editCheckbox(note,task,{checked:status === 'done'});
+        setDetail(note,quest.id,{status,completedAt:status === 'done' ? now : null,updatedAt:now});
+        metadata.taskObservations[quest.id] = {checked:status === 'done',invalidCompletedAt:null};
+      }
+      return true;
+    };
     switch (command.type) {
       case 'project.create': {
         const project = {id:`project-${crypto.randomUUID()}`,title:title(payload.title),description:descriptionText(payload.description ?? ''),sourceIds:[],sourcePaths:[]};
@@ -457,7 +475,7 @@ class QuestStore {
           if (!note || !state.materials.some(value => value.path === relative && value.projectId === project.id)) fail('Выберите материал этого проекта.', 'UNSAFE_PATH');
         } else note = await this._groupNote(project,scan,writes);
         const id = `quest-${crypto.randomUUID()}`;
-        appendTask(note,id,questTitle,{description:'',status:'todo',urgent:false,plannedDate:null,dueDate:null,createdAt:now,updatedAt:now,completedAt:null,...newFields});
+        appendTask(note,id,questTitle,{description:'',status:'todo',onBoard:false,urgent:false,plannedDate:null,dueDate:null,createdAt:now,updatedAt:now,completedAt:null,...newFields});
         metadata.questProjects[id] = project.id;
         saveNote(note);
         break;
@@ -480,23 +498,22 @@ class QuestStore {
       }
       case 'quest.status': {
         if (!VALID_STATUSES.has(payload.status)) fail('Неизвестный статус задания.');
-        const {quest,note,task} = lookupQuest(payload.id);
-        if (quest.status === payload.status && !(quest.recurrence && payload.status === 'done')) break;
-        if (quest.recurrence && payload.status === 'done') {
-          const nextDate = plusDays(localDate(stamp),quest.recurrence.intervalDays);
-          const previousEvent = metadata.completions.filter(value => value.questId === quest.id && value.kind === 'recurrence').at(-1);
-          const event = {id:`completion-${crypto.randomUUID()}`,questId:quest.id,projectId:quest.projectId,title:quest.title,description:quest.description,completedAt:now,kind:'recurrence',previousCompletionId:previousEvent?.id || null,previousRecurrence:quest.recurrence,previousPlannedDate:quest.plannedDate,previousStatus:quest.status};
-          metadata.completions.push(event);
-          editCheckbox(note,task,{checked:false});
-          setDetail(note,quest.id,{status:'todo',completedAt:null,updatedAt:now,plannedDate:nextDate,recurrence:{...quest.recurrence,nextDate,lastCompletedAt:now}});
-        } else {
-          metadata.completions = metadata.completions.filter(event => !(event.questId === quest.id && event.kind === 'quest'));
-          if (payload.status === 'done') metadata.completions.push({id:`completion-${crypto.randomUUID()}`,questId:quest.id,projectId:quest.projectId,title:quest.title,description:quest.description,completedAt:now,kind:'quest'});
-          editCheckbox(note,task,{checked:payload.status === 'done'});
-          setDetail(note,quest.id,{status:payload.status,completedAt:payload.status === 'done' ? now : null,updatedAt:now});
-          metadata.taskObservations[quest.id] = {checked:payload.status === 'done',invalidCompletedAt:null};
+        const target = lookupQuest(payload.id);
+        if (changeStatus(target,payload.status)) saveNote(target.note);
+        break;
+      }
+      case 'quest.board': {
+        if (typeof payload.onBoard !== 'boolean') fail('Некорректный признак размещения на доске.');
+        const hasStatus = own(payload,'status');
+        if (hasStatus && !payload.onBoard) fail('При удалении с доски нельзя менять статус задания.');
+        if (hasStatus && !VALID_STATUSES.has(payload.status)) fail('Неизвестный статус задания.');
+        const target = lookupQuest(payload.id);
+        const statusChanged = hasStatus && changeStatus(target,payload.status);
+        if (target.quest.onBoard !== payload.onBoard || statusChanged) {
+          if (!target.task.anchored && !statusChanged) editCheckbox(target.note,target.task);
+          setDetail(target.note,target.quest.id,{onBoard:payload.onBoard});
+          saveNote(target.note);
         }
-        saveNote(note);
         break;
       }
       case 'quest.delete': {

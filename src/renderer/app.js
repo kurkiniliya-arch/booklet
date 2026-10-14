@@ -5,7 +5,7 @@
   const $ = (selector) => document.querySelector(selector);
   const esc = (value) => String(value ?? '').replace(/[&<>"']/g, character => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[character]));
   const materialExcerpt = value => String(value || 'Материал из хранилища Obsidian.').split(/^##\s/m)[0].replace(/\*\*([^*]+)\*\*/g, '$1').trim();
-  const statusNames = { todo: 'К выполнению', in_progress: 'В процессе', done: 'Сделано' };
+  const statusNames = { todo: 'Сделать', in_progress: 'В процессе', done: 'Сделано' };
   const emptyState = { projects: [], quests: [], materials: [], completions: [], connection: { connected: false, warnings: [] } };
   let data = emptyState;
   let view = 'journal';
@@ -101,6 +101,7 @@
     const focus = captureFocus();
     const scrollPositions = [...$('#content').querySelectorAll('[data-scroll]')].map(element => [element.dataset.scroll, element.scrollTop]);
     document.querySelectorAll('[data-view]').forEach(button => button.setAttribute('aria-current', button.dataset.view === view ? 'page' : 'false'));
+    $('#book').classList.toggle('board-mode', view === 'board' && connected());
     $('.pages').classList.toggle('wide', ['board', 'calendar'].includes(view));
     $('[data-action="new-quest"]').disabled = !connected() || !data.projects.length;
     $('#content').innerHTML = !connected() ? welcomeView() : view === 'history' ? historyView() : view === 'calendar' ? calendarView() : view === 'board' ? boardView() : journalView();
@@ -167,7 +168,15 @@
   }
   function boardView() {
     const quests = data.quests.filter(quest => (!boardFilters.projectId || quest.projectId === boardFilters.projectId) && (!boardFilters.urgent || quest.urgent) && matches(`${quest.title} ${quest.description}`, boardFilters.query));
-    return `<div class="filter-line"><label class="sr-only" for="board-search">Поиск на доске</label><input class="search" id="board-search" type="search" placeholder="Найти на доске…" value="${esc(boardFilters.query)}"><label class="sr-only" for="board-project">Проект на доске</label><select class="small-select" id="board-project">${optionsForProjects(boardFilters.projectId, true)}</select><label><input type="checkbox" id="board-urgent" ${boardFilters.urgent ? 'checked' : ''}> Срочные</label><span class="caption">Перетащите задание или смените статус</span></div><div class="board">${Object.entries(statusNames).map(([status, title]) => { const items = sortQuests(quests.filter(quest => quest.status === status)); return `<section class="board-column" data-status="${status}" aria-label="${title}"><h2 class="board-heading">${title}<span class="count">${items.length}</span></h2><div class="board-list" data-scroll="board-${status}">${items.length ? items.map(quest => `<article class="board-card" draggable="true" data-drag-quest="${esc(quest.id)}"><button class="card-open" data-show-quest="${esc(quest.id)}">${quest.urgent ? '<span class="urgent-mark">! </span>' : ''}${esc(quest.title)}</button><span class="caption">${esc(projectName(quest.projectId))}${quest.recurrence ? ' · ↻' : ''}</span><div class="card-bottom">${taskStatusControl(quest, true)}<span class="caption">${quest.plannedDate ? esc(shortDate(quest.plannedDate)) : ''}</span></div></article>`).join('') : '<div class="board-empty">Пока пусто</div>'}</div></section>`; }).join('')}</div>`;
+    const backlog = sortQuests(quests.filter(quest => quest.status !== 'done'));
+    const selected = quests.filter(quest => quest.onBoard);
+    const filtersActive = boardFilters.query || boardFilters.projectId || boardFilters.urgent;
+    const rows = backlog.map(quest => `<article class="backlog-row ${quest.onBoard ? 'on-board' : ''}" draggable="true" data-drag-quest="${esc(quest.id)}"><div class="backlog-title"><button class="card-open" data-show-quest="${esc(quest.id)}">${quest.urgent ? '<span class="urgent-mark">! </span>' : ''}${esc(quest.title)}</button><span class="caption backlog-project">${esc(projectName(quest.projectId))}${quest.plannedDate ? ` · ${esc(shortDate(quest.plannedDate))}` : ''}${quest.recurrence ? ' · ↻' : ''}</span></div>${quest.onBoard ? '<span class="backlog-selected">На доске ↓</span>' : `<button class="text-button" data-board-add="${esc(quest.id)}" aria-label="На доску: ${esc(quest.title)}">На доску ↓</button>`}</article>`).join('');
+    const columns = Object.entries(statusNames).map(([status, title]) => {
+      const items = sortQuests(selected.filter(quest => quest.status === status));
+      return `<section class="board-column" data-status="${status}" aria-label="${title}"><h3 class="board-heading">${title}<span class="count">${items.length}</span></h3><div class="board-list" data-scroll="board-${status}">${items.length ? items.map(quest => `<article class="board-card" draggable="true" data-drag-quest="${esc(quest.id)}"><button class="card-open" data-show-quest="${esc(quest.id)}">${quest.urgent ? '<span class="urgent-mark">! </span>' : ''}${esc(quest.title)}</button><span class="caption">${esc(projectName(quest.projectId))}${quest.recurrence ? ' · ↻' : ''}${quest.plannedDate ? ` · ${esc(shortDate(quest.plannedDate))}` : ''}</span><div class="card-bottom">${taskStatusControl(quest, true)}<button class="text-button board-remove" data-board-remove="${esc(quest.id)}" aria-label="Убрать с доски: ${esc(quest.title)}" title="Убрать с доски, сохранив задание">↑ Убрать</button></div></article>`).join('') : `<div class="board-empty">${filtersActive ? 'Нет подходящих карточек' : status === 'todo' ? 'Перетащите задание сверху' : 'Пока пусто'}</div>`}</div></section>`;
+    }).join('');
+    return `<div class="board-layout"><section class="backlog-page" data-backlog-drop aria-label="Общий список заданий"><div class="page-heading"><h2>Все открытые задания <span class="count">${backlog.length}</span></h2><span class="caption">Выберите, чем заняться сейчас</span></div><div class="filter-line"><label class="sr-only" for="board-search">Поиск на доске</label><input class="search" id="board-search" type="search" placeholder="Найти задание…" value="${esc(boardFilters.query)}"><label class="sr-only" for="board-project">Проект на доске</label><select class="small-select" id="board-project">${optionsForProjects(boardFilters.projectId, true)}</select><label><input type="checkbox" id="board-urgent" ${boardFilters.urgent ? 'checked' : ''}> Срочные</label>${filtersActive ? '<button class="text-button" data-action="clear-board-filters">Сбросить</button>' : ''}</div><div class="backlog-list scroll" data-scroll="backlog">${rows || `<div class="empty">${filtersActive ? 'По этим фильтрам ничего не найдено.' : 'Все задания выполнены. Новые можно добавить в проектах.'}</div>`}</div></section><section class="board-page" aria-label="Выбранные задания"><div class="page-heading"><h2>На доске <span class="count">${selected.length}</span></h2><span class="caption">Перетащите карточку или смените статус</span></div><div class="board">${columns}</div></section></div>`;
   }
   function calendarView() {
     const first = `${month}-01`;
@@ -276,6 +285,10 @@
     if (!quest) return;
     await mutate('quest.status', { id, status }, status === 'done' ? quest.recurrence ? 'Выполнение записано. Следующая дата запланирована.' : 'Задание выполнено — оно теперь в истории.' : 'Статус обновлён.', () => { if (dialogMode === 'quest') showQuestModal(id); });
   }
+  async function changeBoard(id, onBoard, status) {
+    if (!questById(id)) return;
+    await mutate('quest.board', { id, onBoard, ...(status ? { status } : {}) }, onBoard ? status === 'done' ? 'Выполнение записано.' : 'Задание на доске.' : 'Карточка убрана с доски. Задание сохранено.');
+  }
   async function chooseVault() {
     if (busy) return;
     if (draft) { notify('Перед сменой хранилища сохраните или отмените черновик.'); renderDraft(); return; }
@@ -307,6 +320,8 @@
     if (ds.about) { selectedProject = ds.about; selectedQuest = null; render(); return; }
     if (ds.quest) { selectQuest(ds.quest); return; }
     if (ds.showQuest) { showQuestModal(ds.showQuest); return; }
+    if (ds.boardAdd) { await changeBoard(ds.boardAdd, true); return; }
+    if (ds.boardRemove) { await changeBoard(ds.boardRemove, false); return; }
     if (ds.completion) { selectedCompletion = ds.completion; render(); return; }
     if (ds.day) { selectedDay = ds.day; render(); return; }
     if (ds.editQuest) { startDraft('quest', questById(ds.editQuest)); return; }
@@ -336,6 +351,7 @@
       case 'cancel-draft': draft = null; hideDialog(); break;
       case 'resolve-draft': if (draft) { draft.revision = data.revision; draft.conflict = false; draft.reloaded = false; await saveDraft(); } break;
       case 'clear-history-filters': historyFilters = { query: '', projectId: '', from: '', to: '' }; render(); break;
+      case 'clear-board-filters': boardFilters = { query: '', projectId: '', urgent: false }; render(); break;
       case 'previous-page': { const views = ['journal', 'history', 'calendar', 'board']; view = views[(views.indexOf(view) + views.length - 1) % views.length]; render(); break; }
       case 'next-page': { const views = ['journal', 'history', 'calendar', 'board']; view = views[(views.indexOf(view) + 1) % views.length]; render(); break; }
       case 'previous-month': moveMonth(-1); break;
@@ -387,9 +403,19 @@
     card.classList.add('dragging');
   });
   document.addEventListener('dragend', () => document.querySelectorAll('.dragging,.drag-over').forEach(element => element.classList.remove('dragging', 'drag-over')));
-  document.addEventListener('dragover', event => { const column = event.target.closest('.board-column'); if (column) { event.preventDefault(); event.dataTransfer.dropEffect = 'move'; column.classList.add('drag-over'); } });
-  document.addEventListener('dragleave', event => { const column = event.target.closest('.board-column'); if (column && !column.contains(event.relatedTarget)) column.classList.remove('drag-over'); });
-  document.addEventListener('drop', async event => { const column = event.target.closest('.board-column'); if (!column) return; event.preventDefault(); document.querySelectorAll('.drag-over').forEach(element => element.classList.remove('drag-over')); const id = event.dataTransfer.getData('text/plain'); const quest = questById(id); if (quest && quest.status !== column.dataset.status) await changeStatus(id, column.dataset.status); });
+  document.addEventListener('dragover', event => { const target = event.target.closest('.board-column,[data-backlog-drop]'); if (target) { event.preventDefault(); event.dataTransfer.dropEffect = 'move'; target.classList.add('drag-over'); } });
+  document.addEventListener('dragleave', event => { const target = event.target.closest('.board-column,[data-backlog-drop]'); if (target && !target.contains(event.relatedTarget)) target.classList.remove('drag-over'); });
+  document.addEventListener('drop', async event => {
+    const target = event.target.closest('.board-column,[data-backlog-drop]');
+    if (!target) return;
+    event.preventDefault();
+    document.querySelectorAll('.drag-over').forEach(element => element.classList.remove('drag-over'));
+    const id = event.dataTransfer.getData('text/plain');
+    const quest = questById(id);
+    if (!quest || busy) return;
+    if (target.hasAttribute('data-backlog-drop')) { if (quest.onBoard) await changeBoard(id, false); }
+    else if (!quest.onBoard || quest.status !== target.dataset.status) await changeBoard(id, true, target.dataset.status);
+  });
 
   async function initialize() {
     render();

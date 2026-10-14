@@ -138,3 +138,31 @@ button,input,textarea,select{font-family:Unifont,monospace;font-variant-ligature
 @media(prefers-reduced-motion:reduce){.page-art,.tabs.bookmarks button,.backlog-row{transition:none!important}.board-layout{animation:none!important}}
 
 @media(max-width:980px){.backlog-row .backlog-title{grid-template-columns:minmax(0,1fr) minmax(110px,180px);gap:12px}.backlog-page>.page-heading .caption,.board-page>.page-heading .caption{font-size:14px}}
+
+/* Each leaf has one continuous bend at both ends of the warm paper fold. */
+.book-bar{top:35px}
+.paper-crease{height:24px;border:12px solid transparent;background:none;border-image-width:12px;border-image-repeat:stretch}
+.crease-left{border-image:url('./assets/book_pagecrease_left.png') 7 fill / 12px / 0 stretch}
+.crease-right{border-image:url('./assets/book_pagecrease_right.png') 7 fill / 12px / 0 stretch}
+.paper-crease.crease-top{top:0;bottom:auto;transform:scaleY(-1)}
+.pages:after,.pages.wide:after{width:18px;border:0;border-image:none;background:linear-gradient(90deg,transparent 0%,#ddcda74d 18%,#bea98088 37%,#96805799 48%,#b8a17b88 60%,#e5d7b84d 82%,transparent 100%);opacity:1}
+.book.board-mode .pages:after{width:18px}
+
+/* Project overviews are a compact list; context stays behind one disclosure. */
+.project-task-list{margin-top:4px;border-top:0}
+.project-task-link{align-items:center;gap:12px;padding:12px 4px;border-bottom:1px solid var(--line);font-size:16px;line-height:1.4}
+.project-task-link:hover{background:#eee5cc66}
+.project-task-link .quest-label{min-width:0;flex:1}
+.project-task-meta{flex:none;max-width:150px;color:#a08f6d;font-size:16px;line-height:1.35;text-align:right;white-space:normal;overflow-wrap:anywhere}
+.project-task-arrow{flex:none;color:#b5a17b;font-size:20px;line-height:1}
+.project-notes{margin-top:24px;padding-top:13px;border-top:1px solid var(--line);color:#9d8c6d}
+.project-notes>summary{cursor:pointer;font-size:16px;line-height:1.5;list-style-position:outside;margin-left:14px}
+.project-notes>summary:hover{color:#665335}
+.project-notes>summary:focus-visible{outline:2px solid #7b7251;outline-offset:4px}
+.project-notes[open]>summary{margin-bottom:17px}
+.project-notes .copy{color:#8e7d5e;margin-bottom:15px}
+.project-notes .section-label{margin-top:17px}
+.project-notes .material{padding:10px 0}
+.project-notes .material h3{font-size:16px;line-height:1.4}
+.project-notes .material-actions{margin-top:7px}
+@media(max-width:980px){.project-task-meta{max-width:120px}.project-task-link{gap:9px}}

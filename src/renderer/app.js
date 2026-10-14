@@ -4,7 +4,6 @@
   const api = window.questBook;
   const $ = (selector) => document.querySelector(selector);
   const esc = (value) => String(value ?? '').replace(/[&<>"']/g, character => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[character]));
-  const materialExcerpt = value => String(value || 'Материал из хранилища Obsidian.').split(/^##\s/m)[0].replace(/\*\*([^*]+)\*\*/g, '$1').trim();
   const statusNames = { todo: 'Сделать', in_progress: 'В процессе', done: 'Сделано' };
   const emptyState = { projects: [], quests: [], materials: [], completions: [], connection: { connected: false, warnings: [] } };
   let data = emptyState;
@@ -149,8 +148,10 @@
   }
   function projectDetail(project) {
     if (!project) return '<div class="empty"><h2>Чистая страница</h2><p>Добавьте проект, чтобы собрать в нём свои задания.</p><div class="actions"><button class="button primary" data-action="new-project">Добавить проект</button></div></div>';
+    const tasks = sortQuests(questsFor(project.id).filter(quest => quest.status !== 'done'));
     const materials = data.materials.filter(material => material.projectId === project.id);
-    return `<div class="crumb">Проект</div><h1>${esc(project.title)}</h1><div class="divider"></div><p class="copy">${esc(project.description || 'Описание пока не добавлено.')}</p><div class="actions"><button class="button primary" data-add-project-quest="${esc(project.id)}">+ Добавить задание</button><button class="text-button" data-edit-project="${esc(project.id)}">Редактировать</button></div>${materials.length ? `<h3 class="section-label">СОХРАНЁННЫЕ МАТЕРИАЛЫ</h3>${materials.map(material => `<article class="material"><h3>${esc(material.title)}</h3><p class="copy">${esc(materialExcerpt(material.description))}</p><div class="material-actions"><button class="text-button" data-material-quest="${esc(material.id)}">+ Добавить задание по материалу</button>${material.path ? `<button class="text-button" data-source="${esc(material.path)}">Открыть ↗</button>` : ''}</div></article>`).join('')}` : ''}<div class="actions"><button class="text-button danger" data-delete-project="${esc(project.id)}">Удалить проект</button></div>`;
+    const taskList = tasks.map(quest => `<button class="quest-row project-task-link" data-project-task="${esc(quest.id)}"><span class="quest-label">${quest.urgent ? '<span class="urgent-mark">! </span>' : ''}${esc(quest.title)}</span>${quest.status === 'in_progress' || quest.plannedDate ? `<span class="project-task-meta">${[quest.status === 'in_progress' ? 'В процессе' : '', quest.plannedDate ? shortDate(quest.plannedDate) : ''].filter(Boolean).map(esc).join(' · ')}</span>` : ''}<span class="project-task-arrow" aria-hidden="true">→</span></button>`).join('');
+    return `<div class="crumb">Проект · открытых заданий: ${tasks.length}</div><h1>${esc(project.title)}</h1><div class="divider"></div><div class="project-task-list" aria-label="Задания проекта">${taskList || '<div class="empty">Заданий пока нет.</div>'}</div><div class="actions"><button class="button primary" data-add-project-quest="${esc(project.id)}">+ Добавить задание</button><button class="text-button" data-edit-project="${esc(project.id)}">Редактировать</button></div>${project.description || materials.length ? `<details class="project-notes"><summary>Описание и материалы</summary>${project.description ? `<p class="copy">${esc(project.description)}</p>` : ''}${materials.map(material => `<article class="material"><h3>${esc(material.title)}</h3><div class="material-actions"><button class="text-button" data-material-quest="${esc(material.id)}">+ Добавить задание по материалу</button>${material.path ? `<button class="text-button" data-source="${esc(material.path)}">Открыть в Obsidian ↗</button>` : ''}</div></article>`).join('')}</details>` : ''}<div class="actions"><button class="text-button danger" data-delete-project="${esc(project.id)}">Удалить проект</button></div>`;
   }
   function visibleCompletions() {
     return data.completions.filter(item => {
@@ -319,6 +320,7 @@
     if (ds.project) { expanded = expanded === ds.project ? null : ds.project; selectedProject = ds.project; selectedQuest = null; render(); return; }
     if (ds.about) { selectedProject = ds.about; selectedQuest = null; render(); return; }
     if (ds.quest) { selectQuest(ds.quest); return; }
+    if (ds.projectTask) { selectQuest(ds.projectTask); return; }
     if (ds.showQuest) { showQuestModal(ds.showQuest); return; }
     if (ds.boardAdd) { await changeBoard(ds.boardAdd, true); return; }
     if (ds.boardRemove) { await changeBoard(ds.boardRemove, false); return; }

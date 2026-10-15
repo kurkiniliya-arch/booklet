@@ -1,6 +1,6 @@
 # Implementation contract
 
-Desktop app for Windows. UI is Russian and follows the approved pixel parchment book. Fixed-size book, internal scroll, no content-driven window resizing. Views: journal, completed-history, monthly calendar, simple kanban (todo/in_progress/done). User-requested urgency; no recurrence editor. Existing Pokémon every-two-calendar-days recurrence is retained and supported as a data feature. No employer work content. No private vault data in repository.
+Desktop app for Windows. UI is Russian and follows the approved pixel parchment book. Fixed-size book, internal scroll, no content-driven window resizing. Views: journal, completed-history, monthly calendar, simple kanban (todo/in_progress/done). User-requested urgency; calendar recurrence editor for every N days or selected weekdays. Existing Pokémon every-two-calendar-days recurrence is retained. No employer work content. No private vault data in repository.
 
 ## Shared state
 
@@ -10,14 +10,21 @@ Desktop app for Windows. UI is Russian and follows the approved pixel parchment 
  projects: [{id,title,description}],
  quests: [{id,projectId,title,description,status:'todo'|'in_progress'|'done',onBoard:false,urgent:false,plannedDate:null,dueDate:null,createdAt,updatedAt,completedAt:null,sourcePath:null,recurrence:null}],
  materials: [{id,projectId,title,description,path}],
- completions: [{id,questId,projectId,title,description,completedAt,kind:'quest'|'recurrence'}],
+ completions: [{id,questId,projectId,title,description,completedAt,kind:'quest'|'recurrence',occurrenceDate?}],
  connection: {connected:true,vaultPath,lastSync,warnings:[]}
 }
 ```
 
-Dates plannedDate/dueDate are YYYY-MM-DD or null, timestamps ISO. Recurrence when present is `{intervalDays:2,nextDate:null,lastCompletedAt:null}`. A recurring quest stays open when marked done; a history event is appended and nextDate/plannedDate advances two calendar days. Completion history is separate from current task status. Reopening a completed one-off quest removes its active completion (or marks it reopened; UI should only show valid completions). Never fabricate old completion dates on import; unknown dates are null and shown as unknown.
+Dates plannedDate/dueDate are YYYY-MM-DD or null, timestamps ISO. Recurrence is null or one of:
 
-Board membership is independent of status. Only quests with `onBoard === true` belong to Kanban; missing values default to false, including existing todo/in_progress/done quests. New quests start with `onBoard:false`. Status changes, completion, reopening and recurrence never implicitly add/remove a quest. A recurring quest completed on the board remains on the board in todo for its next occurrence.
+- `{kind:'interval',intervalDays:N,startDate,nextDate,lastCompletedAt}` with N an integer from 1 to 3660.
+- `{kind:'weekly',weekdays:[1,2,3,4,5,6,7],startDate,nextDate,lastCompletedAt}` with one or more ISO weekdays (Monday=1, Sunday=7), stored sorted and unique.
+
+`startDate` anchors the rule. `nextDate` is the first uncompleted scheduled date on or after the current local calendar day, or null when the start is unknown. `lastCompletedAt` is an ISO timestamp or null. Legacy `{intervalDays:2,nextDate:null,lastCompletedAt:null}` remains valid on read: normalize its kind to interval and start from an existing explicit startDate, nextDate or plannedDate, otherwise preserve null without inventing today's date. New/changed schedules require a startDate; an explicitly supplied plannedDate may provide the fallback. A title-only edit without recurrence leaves the rule untouched; roundtripping the same unconfigured legacy rule is also accepted.
+
+Recurring occurrences are generated for the visible date range, never copied into separate quests. `quest.status` with done records the selected `occurrenceDate`; a missing date uses nextDate, while a rule without a start is rejected until the user schedules it. An explicit future occurrence can be completed early without moving neighboring dates. Completion of one occurrence keeps the quest open in todo, never shifts startDate or the future pattern, and does not modify independent plannedDate/dueDate. The same occurrence cannot create duplicate history. `completion.undo` removes only that event and recalculates nextDate using the current rule, preserving later rule edits and other history. Past completed occurrenceDate rows remain visible even after changing or removing a rule. Legacy history without an occurrenceDate stays in history; never infer a scheduled date from its completion timestamp. An externally checked recurring Markdown checkbox closes the series: keep status done, project only known history, and resume explicitly through quest.status todo. Reopening a completed one-off quest removes its active completion. Unknown completion dates stay null.
+
+For one-off quests, board membership is independent of status and dates. Only quests with `onBoard === true` belong to Kanban; missing values default to false, including existing todo/in_progress/done quests. New quests start with `onBoard:false`. Recurring quests belong to the calendar: return onBoard:false even for legacy data that says true, without rewriting files on load; setting a recurrence clears membership, and quest.board with onBoard:true rejects recurring quests. Removing a recurring quest from the board remains allowed. One-off status, completion, reopening and scheduling never change board membership.
 
 ## Renderer API on window.questBook
 
@@ -43,14 +50,16 @@ Dispatch operations:
 - `project.create`: `{title,description}`
 - `project.update`: `{id,title,description}`
 - `project.delete`: `{id}` (explicit confirmation in UI)
-- `quest.create`: `{projectId,title,description,urgent,plannedDate,dueDate,sourcePath?}`
-- `quest.update`: `{id,projectId?,title?,description?,urgent?,plannedDate?,dueDate?}` (partial update)
-- `quest.status`: `{id,status}`
+- `quest.create`: `{projectId,title,description,urgent,plannedDate,dueDate,sourcePath?,recurrence?}`
+- `quest.update`: `{id,projectId?,title?,description?,urgent?,plannedDate?,dueDate?,recurrence?}` (partial update; recurrence:null removes the rule)
+- `quest.status`: `{id,status,occurrenceDate?}` (occurrenceDate only for marking a recurring occurrence done)
 - `quest.board`: `{id,onBoard,status?}` (onBoard is a required boolean; optional status is accepted only when onBoard is true)
 - `quest.delete`: `{id}` (explicit confirmation in UI)
 - `completion.undo`: `{id}` for an erroneous completion/history mark
 
-`quest.board` changes membership and optional status in one transaction using the same completion/recurrence rules as `quest.status`. Removing a quest from the board changes only its membership; status, all dates and completion history stay unchanged. `quest.status` never changes membership. `quest.update` does not set membership; use `quest.board` explicitly.
+`quest.board` changes membership and optional status in one transaction using the same completion rules as `quest.status`. Removing a quest from the board changes only its membership; status, all dates and completion history stay unchanged. For one-off quests, `quest.status` never changes membership. `quest.update` does not accept an onBoard field; use `quest.board` explicitly. Assigning a recurrence clears membership because recurring tasks belong to the calendar.
+
+`src/renderer/schedule.js` is the shared pure UMD/CJS date module (`window.QuestSchedule` in the renderer). Exports: `normalizeRecurrence(value,{plannedDate?})`, `validateRecurrence(value,{plannedDate?})` (throws on invalid/new unconfigured rules), `occurrenceDates(rule,fromDate,toDate)` (inclusive string[]), `isOccurrence(rule,date)`, `nextOccurrence(rule,fromDate,completedDates=[])`, `occurrencesForQuest(quest,fromDate,toDate,completions=[])`, `isDate`, `addDays`, `localDate`, `isoWeekday`. Occurrence rows are `{questId,date,completed,completionId,completedAt,recurring}`. Completed rows include their exact history ID for undo and to avoid duplicate completion controls. Date arithmetic uses UTC calendar days, never 24-hour local-time offsets; store and renderer both get today through localDate in the same system zone. A recurring calendar picker updates recurrence.startDate; a one-off picker updates plannedDate.
 
 ## Storage module API (src/store.cjs)
 

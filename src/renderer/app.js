@@ -2,6 +2,8 @@
 
 (() => {
   const api = window.questBook;
+  const schedule = window.QuestSchedule;
+  const weekdays = ['Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб', 'Вс'];
   const $ = (selector) => document.querySelector(selector);
   const esc = (value) => String(value ?? '').replace(/[&<>"']/g, character => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[character]));
   const statusNames = { todo: 'Сделать', in_progress: 'В процессе', done: 'Сделано' };
@@ -38,6 +40,7 @@
     bookAngle = angle;
     bookScale = scale;
     $('#book-stage').style.setProperty('--book-angle', `${angle}deg`);
+    $('#book-stage').style.setProperty('--bookmark-angle', `${-angle}deg`);
     $('#book-stage').style.setProperty('--book-scale', String(scale));
   }
   async function animateBook(angle, scale, duration) {
@@ -47,11 +50,15 @@
       { transform: bookTransform(bookAngle, bookScale) },
       { transform: bookTransform(angle, scale) }
     ], { duration, easing: 'cubic-bezier(.4, 0, .2, 1)', fill: 'forwards' });
+    const labelAnimations = [...document.querySelectorAll('.bookmark-label')].map(label => label.animate([
+      { transform: `translate(-50%, -50%) rotate(${-bookAngle}deg)` },
+      { transform: `translate(-50%, -50%) rotate(${-angle}deg)` }
+    ], { duration, easing: 'cubic-bezier(.4, 0, .2, 1)', fill: 'forwards' }));
     let timeout;
     try {
       // A minimized/hidden Electron window can pause animation frames.
       await Promise.race([animation.finished.catch(() => {}), new Promise(resolve => { timeout = setTimeout(resolve, duration + 500); })]);
-    } finally { clearTimeout(timeout); setBookTransform(angle, scale); animation.cancel(); }
+    } finally { clearTimeout(timeout); setBookTransform(angle, scale); animation.cancel(); labelAnimations.forEach(labelAnimation => labelAnimation.cancel()); }
   }
   async function waitForWindow(layout) {
     const fits = () => Math.abs(innerWidth - layout.width) <= 1 && Math.abs(innerHeight - layout.height) <= 1;
@@ -122,13 +129,12 @@
   }
   function selectView(next) { view = next; requestBookLayout(); render(); }
 
-  function today() { return timestampDay(new Date().toISOString()); }
+  function today() { return schedule.localDate(new Date()); }
   function timestampDay(value) {
     if (!value) return '';
     const date = new Date(value);
     if (Number.isNaN(date.getTime())) return '';
-    const parts = new Intl.DateTimeFormat('en-CA', { timeZone: 'Europe/Moscow', year: 'numeric', month: '2-digit', day: '2-digit' }).formatToParts(date);
-    return ['year', 'month', 'day'].map(type => parts.find(part => part.type === type).value).join('-');
+    return schedule.localDate(date);
   }
   function readableDate(value, options = {}) {
     if (!value) return 'Дата неизвестна';
@@ -145,10 +151,22 @@
   function matches(value, term) { return String(value || '').toLocaleLowerCase('ru').includes(term.toLocaleLowerCase('ru')); }
   function questsFor(id) { return data.quests.filter(quest => quest.projectId === id); }
   function sortQuests(quests) { return [...quests].sort((a, b) => Number(b.urgent) - Number(a.urgent) || String(a.plannedDate || '9999').localeCompare(String(b.plannedDate || '9999'))); }
-  function dateEvents(day) { return sortQuests(data.quests.filter(quest => quest.status !== 'done' && (quest.plannedDate === day || quest.dueDate === day))); }
+  function recurrenceFor(quest) { return schedule.normalizeRecurrence(quest.recurrence, { plannedDate: quest.plannedDate }); }
+  function recurrenceLabel(rule) {
+    if (!rule) return 'Без повторения';
+    if (rule.kind === 'weekly') return `По дням: ${rule.weekdays.map(day => weekdays[day - 1]).join(', ')}`;
+    return rule.intervalDays === 1 ? 'Каждый день' : rule.intervalDays === 2 ? 'Через день' : `Каждые ${rule.intervalDays} дн.`;
+  }
+  function dateEvents(day) {
+    return sortQuests(data.quests.flatMap(quest => {
+      const occurrence = schedule.occurrencesForQuest(quest, day, day, data.completions)[0];
+      if (occurrence) return [{ ...quest, occurrenceDate: day, occurrenceCompleted: occurrence.completed, completionId: occurrence.completionId, eventRecurring: occurrence.recurring }];
+      return quest.status !== 'done' && quest.dueDate === day ? [{ ...quest, occurrenceDate: null, occurrenceCompleted: false, eventRecurring: false }] : [];
+    }));
+  }
   function optionsForProjects(selected, all = false) { return `${all ? '<option value="">Все проекты</option>' : ''}${data.projects.map(project => `<option value="${esc(project.id)}" ${project.id === selected ? 'selected' : ''}>${esc(project.title)}</option>`).join('')}`; }
   function statusOptions(selected) { return Object.entries(statusNames).map(([value, label]) => `<option value="${value}" ${value === selected ? 'selected' : ''}>${label}</option>`).join(''); }
-  function badge(quest) { return `<span class="badge ${quest.status === 'in_progress' ? 'progress' : quest.status === 'done' ? 'done' : ''}">${statusNames[quest.status] || statusNames.todo}</span>${quest.urgent ? '<span class="badge urgent">! Срочно</span>' : ''}${quest.recurrence ? `<span class="badge">↻ ${quest.recurrence.intervalDays === 2 ? 'Через день' : `Каждые ${esc(quest.recurrence.intervalDays)} дн.`}</span>` : ''}`; }
+  function badge(quest) { return `<span class="badge ${quest.status === 'in_progress' ? 'progress' : quest.status === 'done' ? 'done' : ''}">${statusNames[quest.status] || statusNames.todo}</span>${quest.urgent ? '<span class="badge urgent">! Срочно</span>' : ''}${quest.recurrence ? `<span class="badge">↻ ${esc(recurrenceLabel(recurrenceFor(quest)))}</span>` : ''}`; }
   function taskStatusControl(quest, compact = false) { return `<label class="${compact ? '' : 'status-control'}"><span class="${compact ? 'sr-only' : ''}">Статус</span><select class="${compact ? 'small-select' : 'status-select'}" data-status-quest="${esc(quest.id)}" aria-label="Статус задания ${esc(quest.title)}">${statusOptions(quest.status)}</select></label>`; }
 
   function announce(message) { $('#announcer').textContent = message; }
@@ -241,8 +259,19 @@
     return `<div class="split"><section class="left-page" aria-label="Проекты и задания"><div class="page-heading"><h2>Мои проекты</h2><span class="caption">${data.projects.length}</span></div><label class="sr-only" for="journal-search">Найти задание или проект</label><input class="search" id="journal-search" type="search" placeholder="Найти задание или проект…" value="${esc(query)}" autocomplete="off"><nav class="tree scroll" data-scroll="tree" aria-label="Список проектов">${groups ? tree : '<div class="empty">Ничего не найдено.</div>'}</nav><div class="page-bottom"><button class="text-button" data-action="new-project">+ Добавить проект</button></div></section><section class="right-page" aria-label="Описание"><div class="detail scroll" data-scroll="detail-${esc(selectedQuest || selectedProject || '')}">${selectedQuest && questById(selectedQuest) ? questDetail(questById(selectedQuest)) : projectDetail(projectById(selectedProject))}</div></section></div>`;
   }
   function questDetail(quest, modal = false) {
-    const recurringDoneToday = quest.recurrence && timestampDay(quest.recurrence.lastCompletedAt) === today();
-    return `<div class="crumb">${esc(projectName(quest.projectId))} / Задание</div><h1>${esc(quest.title)}</h1><div class="status-line">${badge(quest)}</div><div class="divider"></div><p class="copy">${esc(quest.description || 'Описание пока не добавлено.')}</p>${quest.plannedDate || quest.dueDate ? `<div class="dates">${quest.plannedDate ? `<div class="date-item"><span>Запланировано</span>${esc(readableDate(quest.plannedDate))}</div>` : ''}${quest.dueDate ? `<div class="date-item"><span>Срок</span>${esc(readableDate(quest.dueDate))}</div>` : ''}</div>` : ''}${quest.recurrence ? `<p class="caption">${quest.recurrence.lastCompletedAt ? `Последняя отметка: ${esc(readableDate(quest.recurrence.lastCompletedAt))}. ` : ''}После выполнения задание останется открытым; следующая дата сдвинется на ${esc(quest.recurrence.intervalDays)} дня.</p>` : ''}<div class="actions"><button class="button ${quest.status === 'done' ? '' : 'primary'}" data-complete="${esc(quest.id)}" ${recurringDoneToday ? 'disabled' : ''}>${recurringDoneToday ? 'Отмечено сегодня' : quest.status === 'done' ? 'Вернуть в открытые' : quest.recurrence ? 'Отметить выполнение' : '✓ Выполнено'}</button><button class="text-button ${quest.urgent ? 'danger' : ''}" data-urgent="${esc(quest.id)}">${quest.urgent ? 'Убрать срочность' : 'Отметить срочным'}</button></div>${taskStatusControl(quest)}<div class="actions"><button class="text-button" data-edit-quest="${esc(quest.id)}">Редактировать задание</button><button class="text-button" data-plan-quest="${esc(quest.id)}">Запланировать</button>${quest.sourcePath ? `<button class="text-button" data-source="${esc(quest.sourcePath)}">В Obsidian ↗</button>` : ''}<button class="text-button danger" data-delete-quest="${esc(quest.id)}">Удалить</button></div>${!modal && quest.status === 'done' ? '<p class="caption section-label">Задание также доступно на странице «Завершённые».</p>' : ''}`;
+    const rule = recurrenceFor(quest);
+    const occurrence = rule ? schedule.occurrencesForQuest(quest, today(), today(), data.completions)[0] : null;
+    const completionAction = rule
+      ? quest.status === 'done'
+        ? `<button class="button primary" data-complete="${esc(quest.id)}">Возобновить повторения</button>`
+        : occurrence?.completed
+        ? `<button class="text-button" data-undo-completion="${esc(occurrence.completionId)}">✓ Сегодня выполнено · отменить</button>`
+        : occurrence
+          ? `<button class="button primary" data-complete="${esc(quest.id)}" data-occurrence-date="${today()}">✓ Выполнено сегодня</button>`
+          : ''
+      : `<button class="button ${quest.status === 'done' ? '' : 'primary'}" data-complete="${esc(quest.id)}">${quest.status === 'done' ? 'Вернуть в открытые' : '✓ Выполнено'}</button>`;
+    const routineInfo = rule ? `<p class="caption routine-hint">${rule.startDate ? `Начало: ${esc(readableDate(rule.startDate))}. ${rule.nextDate ? `Следующее выполнение: ${esc(readableDate(rule.nextDate))}. ` : ''}Каждый день отмечается отдельно в календаре.` : 'Дата начала ещё не выбрана. Откройте календарь и назначьте начало повторений.'}</p>` : '';
+    return `<div class="crumb">${esc(projectName(quest.projectId))} / Задание</div><h1>${esc(quest.title)}</h1><div class="status-line">${badge(quest)}</div><div class="divider"></div><p class="copy">${esc(quest.description || 'Описание пока не добавлено.')}</p>${!rule && quest.plannedDate || quest.dueDate ? `<div class="dates">${!rule && quest.plannedDate ? `<div class="date-item"><span>Запланировано</span>${esc(readableDate(quest.plannedDate))}</div>` : ''}${quest.dueDate ? `<div class="date-item"><span>Срок</span>${esc(readableDate(quest.dueDate))}</div>` : ''}</div>` : ''}${routineInfo}<div class="actions">${completionAction}${rule ? `<button class="button ${occurrence ? '' : 'primary'}" data-calendar-quest="${esc(quest.id)}">В календарь</button>` : ''}<button class="text-button ${quest.urgent ? 'danger' : ''}" data-urgent="${esc(quest.id)}">${quest.urgent ? 'Убрать срочность' : 'Отметить срочным'}</button></div>${!rule ? taskStatusControl(quest) : ''}<div class="actions"><button class="text-button" data-edit-quest="${esc(quest.id)}">Редактировать задание</button>${!rule ? `<button class="text-button" data-plan-quest="${esc(quest.id)}">Запланировать</button><button class="text-button" ${quest.onBoard ? 'data-board-remove' : 'data-board-add'}="${esc(quest.id)}">${quest.onBoard ? 'Убрать с доски' : 'На доску'}</button>` : ''}${quest.sourcePath ? `<button class="text-button" data-source="${esc(quest.sourcePath)}">В Obsidian ↗</button>` : ''}<button class="text-button danger" data-delete-quest="${esc(quest.id)}">Удалить</button></div>${!modal && quest.status === 'done' ? '<p class="caption section-label">Задание также доступно на странице «Завершённые».</p>' : ''}`;
   }
   function projectDetail(project) {
     if (!project) return '<div class="empty"><h2>Чистая страница</h2><p>Добавьте проект, чтобы собрать в нём свои задания.</p><div class="actions"><button class="button primary" data-action="new-project">Добавить проект</button></div></div>';
@@ -266,7 +295,7 @@
     return `<div class="split"><section class="left-page"><div class="page-heading"><h2>Завершённые</h2><span class="count">${completions.length}</span></div><label class="sr-only" for="history-search">Найти завершённое задание</label><input class="search" id="history-search" type="search" placeholder="Найти завершённое задание…" value="${esc(historyFilters.query)}"><div class="filters"><label class="filter-label wide-field">Проект<select id="history-project">${optionsForProjects(historyFilters.projectId, true)}</select></label><label class="filter-label">С даты<input id="history-from" type="date" value="${esc(historyFilters.from)}"></label><label class="filter-label">По дату<input id="history-to" type="date" value="${esc(historyFilters.to)}"></label></div><button class="text-button" data-action="clear-history-filters">Сбросить фильтры</button>${historyFilters.from && historyFilters.to && historyFilters.from > historyFilters.to ? '<p class="inline-warning">Дата начала позже даты окончания.</p>' : ''}<div class="scroll" data-scroll="history" aria-label="История выполнений">${list || '<div class="empty">Здесь появятся выполненные задания. Если они уже есть, попробуйте сбросить фильтры.</div>'}</div></section><section class="right-page"><div class="detail scroll" data-scroll="completion-${esc(selected?.id || '')}">${selected ? `<div class="crumb">${esc(projectName(selected.projectId))} / Завершено</div><h1>${esc(selected.title)}</h1><div class="status-line"><span class="badge done">✓ ${esc(readableDate(selected.completedAt, { year: 'numeric' }))}</span>${selected.kind === 'recurrence' ? '<span class="badge">Отдельное выполнение</span>' : ''}</div><div class="divider"></div><p class="copy">${esc(selected.description || 'Описание не добавлено.')}</p><div class="actions">${questById(selected.questId) ? `<button class="text-button" data-quest="${esc(selected.questId)}">Открыть задание</button>` : ''}<button class="text-button" data-undo-completion="${esc(selected.id)}">Отменить отметку выполнения</button></div>` : '<div class="empty"><h2>Ещё одна глава</h2><p>Выполненные дела остаются здесь — с датой и описанием.</p></div>'}</div></section></div>`;
   }
   function boardView() {
-    const quests = data.quests.filter(quest => (!boardFilters.projectId || quest.projectId === boardFilters.projectId) && (!boardFilters.urgent || quest.urgent) && matches(`${quest.title} ${quest.description}`, boardFilters.query));
+    const quests = data.quests.filter(quest => !quest.recurrence && (!boardFilters.projectId || quest.projectId === boardFilters.projectId) && (!boardFilters.urgent || quest.urgent) && matches(`${quest.title} ${quest.description}`, boardFilters.query));
     const backlog = sortQuests(quests.filter(quest => quest.status !== 'done'));
     const selected = quests.filter(quest => quest.onBoard);
     const filtersActive = boardFilters.query || boardFilters.projectId || boardFilters.urgent;
@@ -275,7 +304,7 @@
       const items = sortQuests(selected.filter(quest => quest.status === status));
       return `<section class="board-column" data-status="${status}" aria-label="${title}"><h3 class="board-heading">${title}<span class="count">${items.length}</span></h3><div class="board-list" data-scroll="board-${status}">${items.length ? items.map(quest => `<article class="board-card" draggable="true" data-drag-quest="${esc(quest.id)}"><button class="card-open" data-show-quest="${esc(quest.id)}">${quest.urgent ? '<span class="urgent-mark">! </span>' : ''}${esc(quest.title)}</button><span class="caption">${esc(projectName(quest.projectId))}${quest.recurrence ? ' · ↻' : ''}${quest.plannedDate ? ` · ${esc(shortDate(quest.plannedDate))}` : ''}</span><div class="card-bottom">${taskStatusControl(quest, true)}<button class="text-button board-remove" data-board-remove="${esc(quest.id)}" aria-label="Убрать с доски: ${esc(quest.title)}" title="Убрать с доски, сохранив задание">↑ Убрать</button></div></article>`).join('') : `<div class="board-empty">${filtersActive ? 'Нет подходящих карточек' : status === 'todo' ? 'Перетащите задание сверху' : 'Пока пусто'}</div>`}</div></section>`;
     }).join('');
-    return `<div class="board-layout"><section class="backlog-page" data-backlog-drop aria-label="Общий список заданий"><div class="page-heading"><h2>Все открытые задания <span class="count">${backlog.length}</span></h2><span class="caption">Выберите, чем заняться сейчас</span></div><div class="filter-line"><label class="sr-only" for="board-search">Поиск на доске</label><input class="search" id="board-search" type="search" placeholder="Найти задание…" value="${esc(boardFilters.query)}"><label class="sr-only" for="board-project">Проект на доске</label><select class="small-select" id="board-project">${optionsForProjects(boardFilters.projectId, true)}</select><label><input type="checkbox" id="board-urgent" ${boardFilters.urgent ? 'checked' : ''}> Срочные</label>${filtersActive ? '<button class="text-button" data-action="clear-board-filters">Сбросить</button>' : ''}</div><div class="backlog-list scroll" data-scroll="backlog">${rows || `<div class="empty">${filtersActive ? 'По этим фильтрам ничего не найдено.' : 'Все задания выполнены. Новые можно добавить в проектах.'}</div>`}</div></section><section class="board-page" aria-label="Выбранные задания"><div class="page-heading"><h2>На доске <span class="count">${selected.length}</span></h2><span class="caption">Перетащите карточку или смените статус</span></div><div class="board">${columns}</div></section></div>`;
+    return `<div class="board-layout"><section class="backlog-page" data-backlog-drop aria-label="Общий список заданий"><div class="page-heading"><h2>Разовые задания <span class="count">${backlog.length}</span></h2><span class="caption">Выберите, чем заняться сейчас</span></div><div class="filter-line"><label class="sr-only" for="board-search">Поиск на доске</label><input class="search" id="board-search" type="search" placeholder="Найти задание…" value="${esc(boardFilters.query)}"><label class="sr-only" for="board-project">Проект на доске</label><select class="small-select" id="board-project">${optionsForProjects(boardFilters.projectId, true)}</select><label><input type="checkbox" id="board-urgent" ${boardFilters.urgent ? 'checked' : ''}> Срочные</label>${filtersActive ? '<button class="text-button" data-action="clear-board-filters">Сбросить</button>' : ''}</div><div class="backlog-list scroll" data-scroll="backlog">${rows || `<div class="empty">${filtersActive ? 'По этим фильтрам ничего не найдено.' : 'Все задания выполнены. Новые можно добавить в проектах.'}</div>`}</div></section><section class="board-page" aria-label="Выбранные задания"><div class="page-heading"><h2>На доске <span class="count">${selected.length}</span></h2><span class="caption">Перетащите карточку или смените статус</span></div><div class="board">${columns}</div></section></div>`;
   }
   function calendarView() {
     const first = `${month}-01`;
@@ -284,8 +313,20 @@
     const start = addDays(first, -offset);
     const days = Array.from({ length: 42 }, (_, index) => addDays(start, index));
     const tasks = dateEvents(selectedDay);
+    const undated = data.quests.filter(quest => quest.status !== 'done' && quest.recurrence && !recurrenceFor(quest)?.startDate);
     const monthName = firstDate.toLocaleDateString('ru-RU', { month: 'long', year: 'numeric', timeZone: 'Europe/Moscow' });
-    return `<div class="calendar-layout"><section class="calendar-main" aria-label="Календарь заданий"><div class="calendar-toolbar"><button class="arrow-button" data-action="previous-month" aria-label="Предыдущий месяц">‹</button><h2>${esc(monthName[0].toUpperCase() + monthName.slice(1))}</h2><button class="arrow-button" data-action="next-month" aria-label="Следующий месяц">›</button><button class="text-button" data-action="today">Сегодня</button></div><div class="calendar-weekdays" aria-hidden="true">${['ПН','ВТ','СР','ЧТ','ПТ','СБ','ВС'].map(day => `<span>${day}</span>`).join('')}</div><div class="calendar-grid">${days.map(day => { const events = dateEvents(day); return `<button class="calendar-day ${day.slice(0,7) !== month ? 'other-month' : ''} ${day === today() ? 'today' : ''}" data-day="${day}" aria-pressed="${selectedDay === day}" aria-label="${esc(readableDate(day))}, заданий: ${events.length}"><span class="day-number">${Number(day.slice(8))}</span>${events.slice(0, 2).map(quest => `<span class="day-event ${quest.urgent ? 'urgent' : ''}">${quest.dueDate === day ? '◆ ' : ''}${esc(quest.title)}</span>`).join('')}${events.length > 2 ? `<span class="day-more">ещё ${events.length - 2}</span>` : ''}</button>`; }).join('')}</div><p class="caption">◆ — срок задания · обычная запись — запланированный день</p></section><section class="calendar-side"><h2>${esc(readableDate(selectedDay))}</h2><p class="caption">${tasks.length ? `Заданий на день: ${tasks.length}` : 'День свободен'}</p><div class="day-list" data-scroll="day-${selectedDay}">${tasks.length ? tasks.map(quest => `<article class="day-task"><button class="card-open" data-show-quest="${esc(quest.id)}">${quest.urgent ? '<span class="urgent-mark">! </span>' : ''}${esc(quest.title)}</button><p class="caption">${esc(projectName(quest.projectId))}${quest.dueDate === selectedDay ? ' · срок' : ''}</p><div class="actions"><button class="text-button" data-complete="${esc(quest.id)}">✓ Выполнено</button><button class="text-button" data-plan-quest="${esc(quest.id)}">Перенести</button>${quest.plannedDate === selectedDay ? `<button class="text-button" data-unplan="${esc(quest.id)}">Убрать из плана</button>` : ''}</div></article>`).join('') : '<div class="empty">Можно выбрать существующее задание и назначить его на этот день.</div>'}</div><button class="button" data-action="schedule-existing" ${data.quests.some(quest => quest.status !== 'done') ? '' : 'disabled'}>+ Запланировать задание</button><button class="text-button" data-action="new-quest-on-day">Создать задание на этот день</button></section></div>`;
+    const grid = days.map(day => {
+      const events = dateEvents(day);
+      return `<button class="calendar-day ${day.slice(0,7) !== month ? 'other-month' : ''} ${day === today() ? 'today' : ''}" data-day="${day}" aria-pressed="${selectedDay === day}" aria-label="${esc(readableDate(day))}, заданий: ${events.length}"><span class="day-number">${Number(day.slice(8))}</span>${events.slice(0, 2).map(quest => `<span class="day-event ${quest.urgent ? 'urgent' : ''} ${quest.eventRecurring ? 'recurring' : ''} ${quest.occurrenceCompleted ? 'completed' : ''}" data-event-quest="${esc(quest.id)}" data-occurrence-date="${day}">${quest.occurrenceCompleted ? '✓ ' : quest.eventRecurring ? '↻ ' : quest.dueDate === day ? '◆ ' : ''}${esc(quest.title)}</span>`).join('')}${events.length > 2 ? `<span class="day-more">ещё ${events.length - 2}</span>` : ''}</button>`;
+    }).join('');
+    const taskList = tasks.map(quest => {
+      const completion = quest.occurrenceCompleted
+        ? quest.completionId ? `<button class="text-button" data-undo-completion="${esc(quest.completionId)}">✓ Выполнено · отменить</button>` : '<span class="caption">✓ Выполнено</span>'
+        : quest.recurrence && !quest.eventRecurring ? '' : `<button class="text-button" data-complete="${esc(quest.id)}" ${quest.eventRecurring ? `data-occurrence-date="${selectedDay}"` : ''}>✓ Выполнено</button>`;
+      return `<article class="day-task ${quest.occurrenceCompleted ? 'completed' : ''}" data-day-quest="${esc(quest.id)}" data-occurrence-date="${selectedDay}"><button class="card-open" data-show-quest="${esc(quest.id)}">${quest.urgent ? '<span class="urgent-mark">! </span>' : ''}${esc(quest.title)}</button><p class="caption">${esc(projectName(quest.projectId))}${quest.eventRecurring ? ` · ${esc(recurrenceLabel(recurrenceFor(quest)))}` : quest.dueDate === selectedDay ? ' · срок' : ''}</p><div class="actions">${completion}${quest.recurrence ? `<button class="text-button" data-edit-quest="${esc(quest.id)}">Расписание</button>` : quest.status !== 'done' ? `<button class="text-button" data-plan-quest="${esc(quest.id)}">Перенести</button>${quest.plannedDate === selectedDay ? `<button class="text-button" data-unplan="${esc(quest.id)}">Убрать из плана</button>` : ''}` : ''}</div></article>`;
+    }).join('');
+    const unplanned = undated.length ? `<section class="undated-routines" aria-label="Повторения без даты"><h3>Повторения без даты <span class="count">${undated.length}</span></h3><p class="caption routine-hint">Выберите начало, чтобы задания появились в календаре.</p>${undated.map(quest => `<article class="day-task"><button class="card-open" data-show-quest="${esc(quest.id)}">↻ ${esc(quest.title)}</button><p class="caption">${esc(recurrenceLabel(recurrenceFor(quest)))}</p><button class="text-button" data-plan-quest="${esc(quest.id)}">Выбрать начало</button></article>`).join('')}</section>` : '';
+    return `<div class="calendar-layout"><section class="calendar-main" aria-label="Календарь заданий"><div class="calendar-toolbar"><button class="arrow-button" data-action="previous-month" aria-label="Предыдущий месяц">‹</button><h2>${esc(monthName[0].toUpperCase() + monthName.slice(1))}</h2><button class="arrow-button" data-action="next-month" aria-label="Следующий месяц">›</button><button class="text-button" data-action="today">Сегодня</button></div><div class="calendar-weekdays" aria-hidden="true">${weekdays.map(day => `<span>${day.toUpperCase()}</span>`).join('')}</div><div class="calendar-grid">${grid}</div><p class="caption">↻ — повторение · ✓ — выполнено · ◆ — срок задания</p></section><section class="calendar-side"><h2>${esc(readableDate(selectedDay))}</h2><p class="caption">${tasks.length ? `Заданий на день: ${tasks.length}` : 'День свободен'}</p><div class="day-list" data-scroll="day-${selectedDay}">${taskList || '<div class="empty">Выберите существующее задание кнопкой ниже.</div>'}${unplanned}</div><button class="button" data-action="schedule-existing" ${data.quests.some(quest => quest.status !== 'done') ? '' : 'disabled'}>+ Добавить существующее задание</button><button class="text-button" data-action="new-quest-on-day">Создать задание на этот день</button></section></div>`;
   }
 
   function showDialog(html, mode) {
@@ -304,8 +345,29 @@
   function dialogHeader(title, draftEditor = false) { return `<div class="dialog-header"><h2 id="dialog-title">${esc(title)}</h2><button class="dialog-close" data-action="hide-dialog" aria-label="${draftEditor ? 'Свернуть редактор, сохранив черновик' : 'Закрыть диалог'}">×</button></div>`; }
   function startDraft(kind, item = null, defaults = {}) {
     if (draft) { renderDraft(); notify('Открыт сохранённый черновик. Сохраните его или нажмите «Отмена».'); return; }
-    draft = { kind, id: item?.id || null, revision: data.revision, title: item?.title || '', description: item?.description || '', projectId: item?.projectId || defaults.projectId || selectedProject || data.projects[0]?.id || '', urgent: Boolean(item?.urgent), plannedDate: item?.plannedDate || defaults.plannedDate || '', dueDate: item?.dueDate || '', sourcePath: item?.sourcePath || defaults.sourcePath || null, sourceTitle: defaults.sourceTitle || '', reloaded: false, conflict: false };
+    const rule = item ? recurrenceFor(item) : null;
+    draft = { kind, id: item?.id || null, revision: data.revision, title: item?.title || '', description: item?.description || '', projectId: item?.projectId || defaults.projectId || selectedProject || data.projects[0]?.id || '', urgent: Boolean(item?.urgent), plannedDate: item?.plannedDate || defaults.plannedDate || '', dueDate: item?.dueDate || '', sourcePath: item?.sourcePath || defaults.sourcePath || null, sourceTitle: defaults.sourceTitle || '', reloaded: false, conflict: false, recurrenceMode: rule?.kind || 'none', intervalDays: rule?.intervalDays || 1, weekdays: [...(rule?.weekdays || [])], recurrenceStart: rule?.startDate || '', recurrenceChanged: false };
     renderDraft();
+  }
+  function recurrenceEditor() {
+    const enabled = draft.recurrenceMode !== 'none';
+    return `<section class="recurrence-fields"><label class="field" for="edit-repeat">Повторение</label><select name="recurrenceMode" id="edit-repeat"><option value="none" ${!enabled ? 'selected' : ''}>Нет</option><option value="interval" ${draft.recurrenceMode === 'interval' ? 'selected' : ''}>Каждые N дней</option><option value="weekly" ${draft.recurrenceMode === 'weekly' ? 'selected' : ''}>По дням недели</option></select><div data-recurrence-panel="interval" ${draft.recurrenceMode === 'interval' ? '' : 'hidden'}><label class="field">Интервал в днях<input id="edit-interval" name="intervalDays" type="number" min="1" max="3660" step="1" value="${esc(draft.intervalDays)}" ${draft.recurrenceMode === 'interval' ? '' : 'disabled'}></label></div><fieldset class="weekday-options" data-recurrence-panel="weekly" ${draft.recurrenceMode === 'weekly' ? '' : 'hidden'}><legend>Дни недели</legend>${weekdays.map((label, index) => `<label><input type="checkbox" name="weekdays" value="${index + 1}" ${draft.weekdays.includes(index + 1) ? 'checked' : ''} ${draft.recurrenceMode === 'weekly' ? '' : 'disabled'}>${label}</label>`).join('')}</fieldset><div data-recurrence-start ${enabled ? '' : 'hidden'}><label class="field">Начало повторений<input id="edit-start" name="recurrenceStart" type="date" value="${esc(draft.recurrenceStart)}" ${enabled ? '' : 'disabled'}></label><p class="caption recurrence-caption">Повторения живут в календаре. Каждое выполнение отмечается отдельно.${enabled && !draft.recurrenceStart ? ' Выберите дату начала, чтобы увидеть их в календаре.' : ''}</p></div></section>`;
+  }
+  function readDraftField(element) {
+    if (element.name === 'weekdays') draft.weekdays = [...document.querySelectorAll('#edit-form [name="weekdays"]:checked')].map(input => Number(input.value));
+    else draft[element.name] = element.type === 'checkbox' ? element.checked : element.value;
+    if (['recurrenceMode', 'intervalDays', 'weekdays', 'recurrenceStart'].includes(element.name)) draft.recurrenceChanged = true;
+  }
+  function updateRecurrenceEditor() {
+    document.querySelectorAll('[data-recurrence-panel]').forEach(panel => {
+      panel.hidden = panel.dataset.recurrencePanel !== draft.recurrenceMode;
+      panel.querySelectorAll('input').forEach(input => { input.disabled = panel.hidden; });
+    });
+    const start = $('[data-recurrence-start]');
+    start.hidden = draft.recurrenceMode === 'none';
+    $('#edit-start').disabled = start.hidden;
+    $('#edit-planned').disabled = draft.recurrenceMode !== 'none';
+    $('#edit-planned').closest('label').hidden = draft.recurrenceMode !== 'none';
   }
   function renderDraft() {
     if (!draft) return;
@@ -313,7 +375,10 @@
     const title = `${draft.id ? 'Редактировать' : 'Добавить'} ${project ? 'проект' : 'задание'}`;
     const remote = draft.id ? (project ? projectById(draft.id) : questById(draft.id)) : null;
     const comparison = draft.conflict ? `<div class="warning-box"><strong>Заметки изменились — черновик ещё не записан.</strong>${remote ? `<details><summary>Посмотреть текущую запись в Obsidian</summary><p class="copy">${esc(remote.title)}\n\n${esc(remote.description || 'Без описания')}${!project ? `\n\nПроект: ${esc(projectName(remote.projectId))}\nЗапланировано: ${esc(remote.plannedDate || 'не задано')}\nСрок: ${esc(remote.dueDate || 'не задан')}\nСрочно: ${remote.urgent ? 'да' : 'нет'}` : ''}</p></details>` : draft.id ? '<p>Эта запись больше не существует в хранилище.</p>' : '<p>Другие записи книги обновились.</p>'}${!draft.id || remote ? '<button class="text-button" type="button" data-action="resolve-draft">Сверено: сохранить мой вариант</button>' : ''}</div>` : '';
-    showDialog(`${dialogHeader(title, true)}<form id="edit-form" class="form"><label class="field">Название<input name="title" id="edit-title" required maxlength="240" autocomplete="off" value="${esc(draft.title)}"></label><label class="field">Описание<textarea name="description" id="edit-description" rows="4" maxlength="30000">${esc(draft.description)}</textarea></label>${!project ? `<label class="field">Проект<select name="projectId" id="edit-project">${optionsForProjects(draft.projectId)}</select></label><div class="field-pair"><label class="field">Запланировать на<input name="plannedDate" id="edit-planned" type="date" value="${esc(draft.plannedDate)}"></label><label class="field">Срок, если есть<input name="dueDate" id="edit-due" type="date" value="${esc(draft.dueDate)}"></label></div><label class="checkbox-field"><input type="checkbox" name="urgent" id="edit-urgent" ${draft.urgent ? 'checked' : ''}> Срочное задание</label>${draft.sourceTitle ? `<p class="caption">По материалу: ${esc(draft.sourceTitle)}</p>` : ''}` : ''}<p id="draft-refresh-note" class="warning-box" ${draft.reloaded && !draft.conflict ? '' : 'hidden'}>Заметки обновились. Ваш черновик сохранён. Перед записью книга проверит, не возник ли конфликт.</p>${comparison}<p class="dialog-error" id="dialog-error" role="alert"></p><div class="form-actions"><button class="button primary" type="submit" ${draft.conflict ? 'disabled' : ''}>${draft.id ? 'Сохранить' : 'Добавить'}</button><button class="text-button" type="button" data-action="cancel-draft">Отмена</button></div><p class="draft-note">Крестик сворачивает редактор и сохраняет черновик до закрытия приложения.</p></form>`, 'draft');
+    const questFields = !project ? `<label class="field">Проект<select name="projectId" id="edit-project">${optionsForProjects(draft.projectId)}</select></label>${recurrenceEditor()}<div class="field-pair"><label class="field">Запланировать на<input name="plannedDate" id="edit-planned" type="date" value="${esc(draft.plannedDate)}"></label><label class="field">Срок, если есть<input name="dueDate" id="edit-due" type="date" value="${esc(draft.dueDate)}"></label></div><label class="checkbox-field"><input type="checkbox" name="urgent" id="edit-urgent" ${draft.urgent ? 'checked' : ''}> Срочное задание</label>${draft.sourceTitle ? `<p class="caption">По материалу: ${esc(draft.sourceTitle)}</p>` : ''}` : '';
+    const ruleComparison = draft.conflict && !project && remote ? `<p class="caption">Текущее повторение в Obsidian: ${esc(recurrenceLabel(recurrenceFor(remote)))}${recurrenceFor(remote)?.startDate ? `, с ${esc(readableDate(recurrenceFor(remote).startDate))}` : ''}.</p>` : '';
+    showDialog(`${dialogHeader(title, true)}<form id="edit-form" class="form"><label class="field">Название<input name="title" id="edit-title" required maxlength="240" autocomplete="off" value="${esc(draft.title)}"></label><label class="field">Описание<textarea name="description" id="edit-description" rows="4" maxlength="30000">${esc(draft.description)}</textarea></label>${questFields}<p id="draft-refresh-note" class="warning-box" ${draft.reloaded && !draft.conflict ? '' : 'hidden'}>Заметки обновились. Ваш черновик сохранён. Перед записью книга проверит, не возник ли конфликт.</p>${comparison}${ruleComparison}<p class="dialog-error" id="dialog-error" role="alert"></p><div class="form-actions"><button class="button primary" type="submit" ${draft.conflict ? 'disabled' : ''}>${draft.id ? 'Сохранить' : 'Добавить'}</button><button class="text-button" type="button" data-action="cancel-draft">Отмена</button></div><p class="draft-note">Крестик сворачивает редактор и сохраняет черновик до закрытия приложения.</p></form>`, 'draft');
+    if (!project) updateRecurrenceEditor();
     $('#edit-title').focus();
   }
   function showQuestModal(id) { const quest = questById(id); if (quest) showDialog(`${dialogHeader('Задание')}${questDetail(quest, true)}`, 'quest'); }
@@ -324,17 +389,44 @@
     showDialog(`${dialogHeader(`Удалить ${kind === 'project' ? 'проект' : 'задание'}?`)}<p class="copy">«${esc(item.title)}»</p><p class="warning-box">${kind === 'project' ? `Проект и его ${questsFor(id).length} заданий исчезнут из книги. Исходные заметки и материалы сохранятся в Obsidian.` : 'Задание будет удалено из книги и из списка задач в заметке. Остальной текст заметки сохранится.'}</p><p id="dialog-error" class="dialog-error" role="alert"></p><div class="actions"><button class="button danger-button" data-action="confirm-delete">Удалить</button><button class="text-button" data-action="hide-dialog">Отмена</button></div>`, 'delete');
   }
   function showSchedule(id = null) {
-    scheduleSelection = { id, day: selectedDay, query: '' };
+    scheduleSelection = { id, day: selectedDay, query: '', revision: data.revision, conflict: false };
     const quest = questById(id);
-    if (quest?.plannedDate) scheduleSelection.day = quest.plannedDate;
+    if (quest) scheduleSelection.day = recurrenceFor(quest)?.startDate || quest.plannedDate || selectedDay;
     renderSchedule();
+  }
+  function scheduleHint(rule, day) {
+    if (!rule) return '';
+    const firstDate = schedule.isDate(day) ? schedule.nextOccurrence({ ...rule, startDate: day }, day) : null;
+    return `↻ ${recurrenceLabel(rule)}. ${firstDate ? `Первое выполнение: ${readableDate(firstDate)}.` : ''}${rule.startDate ? ' Дата ниже меняет начало всего расписания; выполненные дни сохранятся.' : ' Назначьте начало — следующие дни появятся автоматически.'}`;
+  }
+  function updateScheduleHint() {
+    const hint = $('#schedule-repeat-hint');
+    const quest = scheduleSelection && questById(scheduleSelection.id || scheduleSelection.selectedId);
+    if (hint && quest) hint.textContent = scheduleHint(recurrenceFor(quest), scheduleSelection.day);
   }
   function renderSchedule() {
     const selection = scheduleSelection;
     if (!selection) return;
-    const quest = questById(selection.id);
+    const focused = document.activeElement;
+    const focusedRadio = focused?.name === 'questId' ? focused.value : null;
+    const focusedDate = focused?.id === 'schedule-date';
+    const quest = questById(selection.id || selection.selectedId);
+    const rule = quest ? recurrenceFor(quest) : null;
     const tasks = sortQuests(data.quests.filter(item => item.status !== 'done' && matches(`${item.title} ${projectName(item.projectId)}`, selection.query)));
-    showDialog(`${dialogHeader('Запланировать задание')}<form id="schedule-form" class="form">${quest ? `<p class="copy">${esc(quest.title)}</p>` : `<label class="field">Найти задание<input id="schedule-search" type="search" placeholder="Название или проект…" value="${esc(selection.query)}" autocomplete="off"></label><div class="schedule-list">${tasks.map(item => `<label class="schedule-option"><input type="radio" name="questId" value="${esc(item.id)}" ${selection.selectedId === item.id ? 'checked' : ''} required><span>${esc(item.title)}<span class="caption">${esc(projectName(item.projectId))}${item.plannedDate ? ` · ${esc(shortDate(item.plannedDate))}` : ''}</span></span></label>`).join('') || '<p class="empty">Заданий не найдено.</p>'}</div>`}<label class="field">День выполнения<input id="schedule-date" name="day" type="date" value="${esc(selection.day)}" required></label><p id="dialog-error" class="dialog-error" role="alert"></p><div class="form-actions"><button class="button primary" type="submit">Запланировать</button><button class="text-button" type="button" data-action="hide-dialog">Отмена</button></div></form>`, 'schedule');
+    const repeatHint = rule ? `<p class="caption routine-hint" id="schedule-repeat-hint">${esc(scheduleHint(rule, selection.day))}</p>` : '';
+    const list = tasks.map(item => { const itemRule = recurrenceFor(item); return `<label class="schedule-option"><input type="radio" name="questId" value="${esc(item.id)}" ${selection.selectedId === item.id ? 'checked' : ''} required><span>${itemRule ? '↻ ' : ''}${esc(item.title)}<span class="caption">${esc(projectName(item.projectId))}${itemRule ? ` · ${itemRule.startDate ? esc(recurrenceLabel(itemRule)) : 'начало не выбрано'}` : item.plannedDate ? ` · ${esc(shortDate(item.plannedDate))}` : ''}</span></span></label>`; }).join('');
+    showDialog(`${dialogHeader('Добавить задание в календарь')}<form id="schedule-form" class="form">${selection.id && quest ? `<p class="copy">${esc(quest.title)}</p>` : `<label class="field">Найти задание<input id="schedule-search" type="search" placeholder="Название или проект…" value="${esc(selection.query)}" autocomplete="off"></label><div class="schedule-list">${list || '<p class="empty">Заданий не найдено.</p>'}</div>`}<label class="field">${rule ? 'Начало повторений' : 'День выполнения'}<input id="schedule-date" name="day" type="date" value="${esc(selection.day)}" required></label>${repeatHint}${selection.conflict ? '<div class="warning-box">Задания изменились в Obsidian. Выбранный день сохранён.<button class="text-button" type="button" data-action="reload-schedule">Обновить сведения о задании</button></div>' : ''}<p id="dialog-error" class="dialog-error" role="alert"></p><div class="form-actions"><button class="button primary" type="submit" ${selection.conflict ? 'disabled' : ''}>Запланировать</button><button class="text-button" type="button" data-action="hide-dialog">Отмена</button></div></form>`, 'schedule');
+    if (focusedRadio) [...document.querySelectorAll('#schedule-form [name="questId"]')].find(input => input.value === focusedRadio)?.focus();
+    if (focusedDate) $('#schedule-date').focus();
+  }
+  async function saveSchedule() {
+    const selection = { ...scheduleSelection };
+    const quest = questById(selection.id || selection.selectedId);
+    if (!quest || !schedule.isDate(selection.day)) { $('#dialog-error').textContent = 'Выберите задание и день выполнения.'; return; }
+    const rule = recurrenceFor(quest);
+    const payload = rule ? { id: quest.id, recurrence: { ...rule, startDate: selection.day } } : { id: quest.id, plannedDate: selection.day };
+    const targetDay = rule ? schedule.nextOccurrence(payload.recurrence, selection.day) || selection.day : selection.day;
+    await mutate('quest.update', payload, 'Задание добавлено в календарь.', () => { selectedDay = targetDay; month = targetDay.slice(0, 7); hideDialog(); render(); }, selection.revision);
   }
   function showConnection() {
     const warnings = data.connection?.warnings || [];
@@ -359,7 +451,8 @@
       if (inline) inline.textContent = message;
       notify(message, true);
       try { acceptState(await api.refresh(), true); } catch { /* Keep the current readable state and the user's draft. */ }
-      if (draft && revision === draft.revision && /измен|conflict/i.test(message)) { draft.conflict = true; renderDraft(); $('#dialog-error').textContent = message; }
+      if (dialogMode === 'draft' && draft && revision === draft.revision && /измен|conflict/i.test(message)) { draft.conflict = true; renderDraft(); $('#dialog-error').textContent = message; }
+      if (dialogMode === 'schedule' && scheduleSelection && /измен|conflict/i.test(message)) { scheduleSelection.conflict = true; renderSchedule(); $('#dialog-error').textContent = message; }
       return false;
     } finally { busy = false; document.body.removeAttribute('aria-busy'); if (submit?.isConnected) submit.disabled = false; }
   }
@@ -370,7 +463,14 @@
     const current = { ...draft };
     const previousIds = new Set((current.kind === 'project' ? data.projects : data.quests).map(item => item.id));
     const payload = { ...(current.id ? { id: current.id } : {}), title: current.title.trim(), description: current.description.trim() };
-    if (current.kind === 'quest') Object.assign(payload, { projectId: current.projectId, urgent: current.urgent, plannedDate: current.plannedDate || null, dueDate: current.dueDate || null, ...(!current.id && current.sourcePath ? { sourcePath: current.sourcePath } : {}) });
+    if (current.kind === 'quest') {
+      Object.assign(payload, { projectId: current.projectId, urgent: current.urgent, plannedDate: current.plannedDate || null, dueDate: current.dueDate || null, ...(!current.id && current.sourcePath ? { sourcePath: current.sourcePath } : {}) });
+      if (current.recurrenceChanged || !current.id && current.recurrenceMode !== 'none') {
+        const rule = current.recurrenceMode === 'none' ? null : { kind: current.recurrenceMode, startDate: current.recurrenceStart || null, ...(current.recurrenceMode === 'weekly' ? { weekdays: current.weekdays } : { intervalDays: Number(current.intervalDays) }) };
+        try { payload.recurrence = schedule.validateRecurrence(rule); }
+        catch (error) { $('#dialog-error').textContent = error.message; return; }
+      }
+    }
     await mutate(`${current.kind}.${current.id ? 'update' : 'create'}`, payload, 'Сохранено в Obsidian.', next => {
       const item = (current.kind === 'project' ? next.projects : next.quests).find(item => current.id ? item.id === current.id : !previousIds.has(item.id));
       if (item) { selectedProject = current.kind === 'project' ? item.id : item.projectId; expanded = selectedProject; selectedQuest = current.kind === 'quest' ? item.id : null; }
@@ -379,14 +479,16 @@
       render();
     }, current.revision);
   }
-  async function changeStatus(id, status) {
+  async function changeStatus(id, status, occurrenceDate) {
     const quest = questById(id);
     if (!quest) return;
-    await mutate('quest.status', { id, status }, status === 'done' ? quest.recurrence ? 'Выполнение записано. Следующая дата запланирована.' : 'Задание выполнено — оно теперь в истории.' : 'Статус обновлён.', () => { if (dialogMode === 'quest') showQuestModal(id); });
+    await mutate('quest.status', { id, status, ...(occurrenceDate ? { occurrenceDate } : {}) }, status === 'done' ? quest.recurrence ? 'Выполнение за выбранный день записано.' : 'Задание выполнено — оно теперь в истории.' : 'Статус обновлён.', () => { if (dialogMode === 'quest') showQuestModal(id); });
   }
   async function changeBoard(id, onBoard, status) {
-    if (!questById(id)) return;
-    await mutate('quest.board', { id, onBoard, ...(status ? { status } : {}) }, onBoard ? status === 'done' ? 'Выполнение записано.' : 'Задание на доске.' : 'Карточка убрана с доски. Задание сохранено.');
+    const quest = questById(id);
+    if (!quest) return;
+    if (onBoard && quest.recurrence) { notify('Повторяющиеся задания планируются в календаре.'); return; }
+    await mutate('quest.board', { id, onBoard, ...(status ? { status } : {}) }, onBoard ? status === 'done' ? 'Выполнение записано.' : 'Задание на доске.' : 'Карточка убрана с доски. Задание сохранено.', () => { if (dialogMode === 'quest') showQuestModal(id); });
   }
   async function chooseVault() {
     if (busy) return;
@@ -428,11 +530,23 @@
     if (ds.materialQuest) { const material = data.materials.find(item => item.id === ds.materialQuest); if (material) startDraft('quest', null, { projectId: material.projectId, sourcePath: material.path, sourceTitle: material.title }); return; }
     if (ds.deleteQuest) { showDelete('quest', ds.deleteQuest); return; }
     if (ds.deleteProject) { showDelete('project', ds.deleteProject); return; }
-    if (ds.complete) { const quest = questById(ds.complete); if (quest) await changeStatus(quest.id, quest.status === 'done' ? 'todo' : 'done'); return; }
+    if (ds.complete) { const quest = questById(ds.complete); if (quest) await changeStatus(quest.id, quest.status === 'done' ? 'todo' : 'done', ds.occurrenceDate); return; }
     if (ds.urgent) { const quest = questById(ds.urgent); if (quest) await mutate('quest.update', { id: quest.id, urgent: !quest.urgent }, quest.urgent ? 'Срочность снята.' : 'Задание отмечено срочным.', () => { if (dialogMode === 'quest') showQuestModal(quest.id); }); return; }
     if (ds.planQuest) { showSchedule(ds.planQuest); return; }
-    if (ds.unplan) { await mutate('quest.update', { id: ds.unplan, plannedDate: null }, 'День выполнения освобождён.'); return; }
-    if (ds.undoCompletion) { await mutate('completion.undo', { id: ds.undoCompletion }, 'Отметка выполнения отменена.'); return; }
+    if (ds.calendarQuest) {
+      const quest = questById(ds.calendarQuest);
+      if (!quest) return;
+      const rule = recurrenceFor(quest);
+      selectedDay = rule?.nextDate || rule?.startDate || selectedDay;
+      month = selectedDay.slice(0, 7);
+      hideDialog();
+      selectView('calendar');
+      await requestBookLayout();
+      if (!rule?.startDate && view === 'calendar' && open) showSchedule(quest.id);
+      return;
+    }
+    if (ds.unplan) { if (!questById(ds.unplan)?.recurrence) await mutate('quest.update', { id: ds.unplan, plannedDate: null }, 'День выполнения освобождён.'); return; }
+    if (ds.undoCompletion) { const id = data.completions.find(item => item.id === ds.undoCompletion)?.questId; await mutate('completion.undo', { id: ds.undoCompletion }, 'Отметка выполнения отменена.', () => { if (dialogMode === 'quest' && id) showQuestModal(id); }); return; }
     if (ds.source) { try { await api.openSource(ds.source); } catch (error) { notify(`Не удалось открыть заметку: ${error.message || error}`, true); } return; }
     switch (ds.action) {
       case 'close-book': showBook(false); break;
@@ -456,36 +570,35 @@
       case 'next-month': moveMonth(1); break;
       case 'today': selectedDay = today(); month = selectedDay.slice(0, 7); render(); break;
       case 'schedule-existing': showSchedule(); break;
+      case 'reload-schedule': if (scheduleSelection) { scheduleSelection.revision = data.revision; scheduleSelection.conflict = false; renderSchedule(); } break;
       case 'confirm-delete': { const target = confirmation; if (target) await mutate(`${target.kind}.delete`, { id: target.id }, target.kind === 'project' ? 'Проект удалён из книги.' : 'Задание удалено.', () => { if (draft?.id === target.id) draft = null; hideDialog(); render(); }); break; }
     }
   });
   document.addEventListener('input', event => {
     const element = event.target;
-    if (draft && element.closest('#edit-form') && element.name) { draft[element.name] = element.type === 'checkbox' ? element.checked : element.value; return; }
+    if (draft && element.closest('#edit-form') && element.name) { readDraftField(element); return; }
     if (element.id === 'journal-search') { query = element.value; render(); }
     if (element.id === 'history-search') { historyFilters.query = element.value; render(); }
     if (element.id === 'board-search') { boardFilters.query = element.value; render(); }
     if (element.id === 'schedule-search' && scheduleSelection) { const caret = element.selectionStart; scheduleSelection.query = element.value; renderSchedule(); const input = $('#schedule-search'); input.focus(); input.setSelectionRange(caret, caret); }
-    if (element.id === 'schedule-date' && scheduleSelection) scheduleSelection.day = element.value;
+    if (element.id === 'schedule-date' && scheduleSelection) { scheduleSelection.day = element.value; updateScheduleHint(); }
   });
   document.addEventListener('change', async event => {
     const element = event.target;
-    if (draft && element.closest('#edit-form') && element.name) draft[element.name] = element.type === 'checkbox' ? element.checked : element.value;
+    if (draft && element.closest('#edit-form') && element.name) { readDraftField(element); if (element.name === 'recurrenceMode') updateRecurrenceEditor(); }
     if (element.dataset.statusQuest) { const id = element.dataset.statusQuest; const status = element.value; if (busy) { element.value = questById(id)?.status || 'todo'; return; } await changeStatus(id, status); }
     const historyKeys = { 'history-project': 'projectId', 'history-from': 'from', 'history-to': 'to' };
     if (historyKeys[element.id]) { historyFilters[historyKeys[element.id]] = element.value; render(); }
     if (element.id === 'board-project') { boardFilters.projectId = element.value; render(); }
     if (element.id === 'board-urgent') { boardFilters.urgent = element.checked; render(); }
-    if (element.name === 'questId' && scheduleSelection) scheduleSelection.selectedId = element.value;
+    if (element.name === 'questId' && scheduleSelection) { scheduleSelection.selectedId = element.value; renderSchedule(); }
+    if (element.id === 'schedule-date' && scheduleSelection) { scheduleSelection.day = element.value; updateScheduleHint(); }
   });
   document.addEventListener('submit', async event => {
     event.preventDefault();
     if (event.target.id === 'edit-form') await saveDraft();
     if (event.target.id === 'schedule-form' && scheduleSelection) {
-      const selection = { ...scheduleSelection };
-      const id = selection.id || selection.selectedId;
-      if (!id || !selection.day) { $('#dialog-error').textContent = 'Выберите задание и день выполнения.'; return; }
-      await mutate('quest.update', { id, plannedDate: selection.day }, 'Задание добавлено в календарь.', () => { selectedDay = selection.day; month = selection.day.slice(0, 7); hideDialog(); render(); });
+      await saveSchedule();
     }
   });
   $('#editor').addEventListener('cancel', event => { event.preventDefault(); hideDialog(); });

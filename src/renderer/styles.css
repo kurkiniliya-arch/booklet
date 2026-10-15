@@ -184,3 +184,32 @@ body.book-turning #content{opacity:0;pointer-events:none}
 .book.board-mode .board-card .card-bottom>label{width:100%}
 .book.board-mode .board-remove{font-size:16px}
 .book.board-mode .board-empty{padding:16px 6px;font-size:16px;line-height:1.35;overflow-wrap:anywhere}
+
+/* Side bookmarks retain their physical position while their labels read normally. */
+.bookmark-label{display:block;position:absolute;left:50%;top:calc(50% - 7px);width:max-content;line-height:22px;white-space:nowrap;transform:translate(-50%,-50%) rotate(var(--bookmark-angle,0deg));transform-origin:center;pointer-events:none}
+.book.board-mode .tabs.bookmarks button{height:82px;padding:0}
+.book.board-mode .tabs.bookmarks button[aria-current=page]{height:87px}
+.book.board-mode .bookmark-label{top:calc(50% - 3px)}
+.book.board-mode .tabs.bookmarks button[aria-current=page]:after{top:4px;bottom:auto;left:10px;right:10px;height:2px}
+.book.board-mode .book-bar{top:49px}
+
+/* Scheduling remains part of the task editor, using the book's existing controls. */
+.recurrence-fields{display:flex;flex-direction:column;gap:12px;margin-top:2px;padding-top:14px;border-top:1px solid var(--line)}
+.recurrence-fields .field{font-weight:400}
+.recurrence-fields>select{width:100%;min-height:40px;border:1px solid #c5b28c;border-radius:0;background:#fffbf0;box-shadow:inset 1px 1px #e8ddc4;padding:9px 10px;font-size:16px;font-weight:400}
+.recurrence-fields .field-pair{align-items:start}
+.recurrence-fields input[type=number]{max-width:130px}
+.weekday-options{display:flex;align-items:center;flex-wrap:wrap;gap:8px 15px}
+.weekday-options label{display:inline-flex;align-items:center;gap:5px;font-size:16px;line-height:1.4;cursor:pointer;white-space:nowrap}
+.weekday-options input[type=checkbox]{margin:0;accent-color:#8d7956}
+.recurrence-caption{font-size:16px;line-height:1.4;color:#9d8c6d;overflow-wrap:anywhere}
+.day-event.recurring{background:#e0dfc7;color:#777b55}
+.day-task .recurrence-caption{margin-top:5px}
+.book.board-mode .tabs.bookmarks{height:82px}
+.recurrence-fields fieldset{min-width:0;margin:0;padding:0;border:0}
+.recurrence-fields legend{margin-bottom:7px;padding:0;font-size:16px;font-weight:400}
+.weekday-options input[type=checkbox]{width:auto;height:auto;padding:0;box-shadow:none;flex:none}
+.undated-routines{margin-top:20px;padding-top:13px;border-top:1px solid var(--line)}
+.undated-routines h3{font-size:16px;font-weight:400;line-height:1.4;color:#8e7d5e;margin-bottom:9px}
+.undated-routines .text-button{display:block;text-align:left;margin-top:8px;line-height:1.4}
+.routine-hint{font-size:16px;line-height:1.4;color:#9d8c6d;margin-top:8px;overflow-wrap:anywhere}

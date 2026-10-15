@@ -131,12 +131,17 @@ test('ordinary status/undo operations never select or deselect a quest',async t 
   assert.equal(state.quests[0].onBoard,true);
 });
 
-test('recurring completion remains selected in todo, with persisted occurrence and schedule',async t => {
-  const f = await fixture(t,CONTENT.replace('manual_task_field: keep-too','manual_task_field: keep-too\n    recurrence: {intervalDays: 2, nextDate: null, lastCompletedAt: null}'));
-  let state = await f.dispatch('quest.board',{id:'board-task',onBoard:true,status:'done'});
-  assert.equal(state.quests[0].onBoard,true);
+test('legacy recurring board membership is hidden and completion stays in the calendar',async t => {
+  const f = await fixture(t,CONTENT.replace('manual_task_field: keep-too','manual_task_field: keep-too\n    onBoard: true\n    recurrence: {intervalDays: 2, startDate: 2026-10-15, nextDate: null, lastCompletedAt: null}'));
+  let state = await f.store.load();
+  assert.equal(state.quests[0].onBoard,false);
+  assert.equal(details(await fs.readFile(f.source,'utf8')).onBoard,true,'load does not migrate source fields');
+  await assert.rejects(f.dispatch('quest.board',{id:'board-task',onBoard:true,status:'done'},state),{code:'VALIDATION'});
+  state = await f.dispatch('quest.status',{id:'board-task',status:'done',occurrenceDate:'2026-10-15'},state);
+  assert.equal(state.quests[0].onBoard,false);
   assert.equal(state.quests[0].status,'todo');
-  assert.equal(state.quests[0].plannedDate,'2026-10-17');
+  assert.equal(state.quests[0].plannedDate,'2026-10-18');
+  assert.equal(state.quests[0].recurrence.nextDate,'2026-10-17');
   assert.equal(state.completions[0].kind,'recurrence');
   const before = state.quests[0];
   const history = state.completions;

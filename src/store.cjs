@@ -5,6 +5,7 @@ const path = require('node:path');
 const os = require('node:os');
 const crypto = require('node:crypto');
 const YAML = require('yaml');
+const Schedule = require('./renderer/schedule.js');
 
 const META_PATH = '90 Система/Quest Book.json';
 const INDEX_PATH = '90 Система/Индекс.json';
@@ -30,12 +31,21 @@ function validDate(value) {
 }
 function date(value, name) { if (!validDate(value)) fail(`Некорректная дата «${name}».`); return value; }
 function iso(value) { return typeof value === 'string' && Number.isFinite(Date.parse(value)) && /T/.test(value) ? value : null; }
-function localDate(value) { return `${value.getFullYear()}-${String(value.getMonth() + 1).padStart(2, '0')}-${String(value.getDate()).padStart(2, '0')}`; }
-function plusDays(value, count) { const parsed = new Date(`${value}T12:00:00Z`); parsed.setUTCDate(parsed.getUTCDate() + count); return parsed.toISOString().slice(0, 10); }
-function recurrence(value) {
-  if (!value || typeof value !== 'object') return null;
-  if (!Number.isInteger(value.intervalDays) || value.intervalDays < 1 || value.intervalDays > 3660) return null;
-  return {intervalDays:value.intervalDays, nextDate:validDate(value.nextDate) ? value.nextDate : null, lastCompletedAt:iso(value.lastCompletedAt)};
+const localDate = Schedule.localDate;
+function recurrence(value, plannedDate = null) { return Schedule.normalizeRecurrence(value,{plannedDate}); }
+function recurrenceRuntime(rule, id, completions, today, keepLast = true) {
+  if (!rule) return null;
+  const events = completions.filter(event => event.questId === id && event.kind === 'recurrence');
+  const completedDates = events.map(event => event.occurrenceDate).filter(Schedule.isDate);
+  const latest = events.map(event => iso(event.completedAt)).filter(Boolean).sort((a,b) => Date.parse(b) - Date.parse(a))[0];
+  return {...rule,nextDate:rule.startDate ? Schedule.nextOccurrence(rule,today,completedDates) : null,lastCompletedAt:latest || (keepLast ? rule.lastCompletedAt : null)};
+}
+function ruleKey(rule) { return rule ? JSON.stringify([rule.kind,rule.intervalDays || null,rule.weekdays || null,rule.startDate]) : null; }
+function preserveRecurrenceFields(previous, rule) {
+  if (!rule) return null;
+  const known = new Set(['kind','intervalDays','weekdays','startDate','nextDate','lastCompletedAt']);
+  const extra = Object.fromEntries(Object.entries(asObject(previous)).filter(([key]) => !known.has(key)));
+  return {...extra,...rule};
 }
 function relativePath(value) {
   if (typeof value !== 'string' || !value || value.includes('\0') || value.includes(':') || path.isAbsolute(value) || path.win32.isAbsolute(value)) fail('Недопустимый путь к заметке.', 'UNSAFE_PATH');
@@ -311,11 +321,12 @@ class QuestStore {
         if (assignedId && metadata.deletedProjectIds.includes(assignedId)) continue;
         const projectId = metadata.projects.some(project => project.id === assignedId) ? assignedId : group?.id;
         if (!projectId) continue;
+        const schedule = recurrenceRuntime(recurrence(detail.recurrence,detail.plannedDate),task.id,metadata.completions,localDate(this.now()));
         const status = task.checked ? 'done' : detail.status === 'in_progress' ? 'in_progress' : 'todo';
         const observation = asObject(asObject(metadata.taskObservations)[task.id]);
         const doneAt = task.checked && observation.invalidCompletedAt !== detail.completedAt ? iso(detail.completedAt) : null;
         const sourceDescription = taskDescription(note,detail);
-        quests.push({id:task.id,projectId,title:typeof override.title === 'string' && override.sourceTitle === task.title ? override.title : task.title,description:typeof detail.description === 'string' ? detail.description : typeof override.description === 'string' && override.sourceDescription === sourceDescription ? override.description : sourceDescription,status,onBoard:detail.onBoard === true,urgent:detail.urgent === true,plannedDate:validDate(detail.plannedDate) ? detail.plannedDate : null,dueDate:validDate(detail.dueDate) ? detail.dueDate : validDate(detail.deadline) ? detail.deadline : null,createdAt:iso(detail.createdAt),updatedAt:iso(detail.updatedAt),completedAt:doneAt,sourcePath:note.relative,recurrence:recurrence(detail.recurrence)});
+        quests.push({id:task.id,projectId,title:typeof override.title === 'string' && override.sourceTitle === task.title ? override.title : task.title,description:typeof detail.description === 'string' ? detail.description : typeof override.description === 'string' && override.sourceDescription === sourceDescription ? override.description : sourceDescription,status,onBoard:!schedule && detail.onBoard === true,urgent:detail.urgent === true,plannedDate:validDate(detail.plannedDate) ? detail.plannedDate : null,dueDate:validDate(detail.dueDate) ? detail.dueDate : validDate(detail.deadline) ? detail.deadline : null,createdAt:iso(detail.createdAt),updatedAt:iso(detail.updatedAt),completedAt:doneAt,sourcePath:note.relative,recurrence:schedule && status === 'done' ? {...schedule,nextDate:null} : schedule});
       }
     }
     const projects = metadata.projects.filter(project => !metadata.deletedProjectIds.includes(project.id)).map(project => {
@@ -323,7 +334,7 @@ class QuestStore {
       const projectDescription = note ? groupDescription(note) : null;
       return {id:project.id,title:note?.title || project.title,description:projectDescription ?? project.description ?? ''};
     });
-    const completions = metadata.completions.filter(event => projects.some(project => project.id === event.projectId) && (event.kind === 'recurrence' || quests.some(quest => quest.id === event.questId && quest.status === 'done'))).map(clone);
+    const completions = metadata.completions.filter(event => projects.some(project => project.id === event.projectId) && (event.kind === 'recurrence' || quests.some(quest => quest.id === event.questId && (quest.status === 'done' || quest.recurrence)))).map(clone);
     for (const quest of quests) {
       if (quest.status === 'done' && !completions.some(event => event.questId === quest.id && event.kind === 'quest')) completions.push({id:`import-completion-${quest.id}`,questId:quest.id,projectId:quest.projectId,title:quest.title,description:quest.description,completedAt:quest.completedAt,kind:'quest'});
     }
@@ -412,15 +423,32 @@ class QuestStore {
       }
       return result;
     };
-    const changeStatus = ({quest,note,task}, status) => {
+    const editRecurrence = (value, id, previous, priorRule, payload) => {
+      if (value === null) return null;
+      let rule;
+      try { rule = Schedule.validateRecurrence(value,{plannedDate:own(payload,'plannedDate') ? payload.plannedDate : null}); }
+      catch (error) {
+        const normalized = recurrence(value);
+        if (normalized && priorRule && value.startDate == null && !normalized.startDate && ruleKey(normalized) === ruleKey(priorRule)) rule = priorRule;
+        else fail(error.message);
+      }
+      rule.lastCompletedAt = priorRule?.lastCompletedAt || null;
+      return preserveRecurrenceFields(previous,recurrenceRuntime(rule,id,metadata.completions,localDate(stamp)));
+    };
+    const changeStatus = ({quest,note,task}, status, occurrenceDate) => {
+      if (occurrenceDate !== undefined && (!quest.recurrence || status !== 'done')) fail('Дата появления применяется только к выполнению повторяющегося задания.');
       if (quest.status === status && !(quest.recurrence && status === 'done')) return false;
       if (quest.recurrence && status === 'done') {
-        const nextDate = plusDays(localDate(stamp),quest.recurrence.intervalDays);
-        const previousEvent = metadata.completions.filter(value => value.questId === quest.id && value.kind === 'recurrence').at(-1);
-        const event = {id:`completion-${crypto.randomUUID()}`,questId:quest.id,projectId:quest.projectId,title:quest.title,description:quest.description,completedAt:now,kind:'recurrence',previousCompletionId:previousEvent?.id || null,previousRecurrence:quest.recurrence,previousPlannedDate:quest.plannedDate,previousStatus:quest.status};
+        if (quest.status === 'done') fail('Серия закрыта. Сначала возобновите её, чтобы отмечать отдельные появления.');
+        const chosenDate = occurrenceDate === undefined ? quest.recurrence.nextDate : occurrenceDate;
+        if (!quest.recurrence.startDate) fail('Сначала выберите дату начала повторений в календаре.');
+        if (!Schedule.isDate(chosenDate) || !Schedule.isOccurrence(quest.recurrence,chosenDate)) fail('Выберите дату, которая входит в расписание задания.');
+        if (metadata.completions.some(event => event.questId === quest.id && event.kind === 'recurrence' && event.occurrenceDate === chosenDate)) return false;
+        const event = {id:`completion-${crypto.randomUUID()}`,questId:quest.id,projectId:quest.projectId,title:quest.title,description:quest.description,completedAt:now,kind:'recurrence',occurrenceDate:chosenDate};
         metadata.completions.push(event);
         editCheckbox(note,task,{checked:false});
-        setDetail(note,quest.id,{status:'todo',completedAt:null,updatedAt:now,plannedDate:nextDate,recurrence:{...quest.recurrence,nextDate,lastCompletedAt:now}});
+        const nextRule = recurrenceRuntime(quest.recurrence,quest.id,metadata.completions,localDate(stamp));
+        setDetail(note,quest.id,{status:'todo',onBoard:false,completedAt:null,updatedAt:now,recurrence:preserveRecurrenceFields(task.detail.recurrence,nextRule)});
       } else {
         metadata.completions = metadata.completions.filter(event => !(event.questId === quest.id && event.kind === 'quest'));
         if (status === 'done') metadata.completions.push({id:`completion-${crypto.randomUUID()}`,questId:quest.id,projectId:quest.projectId,title:quest.title,description:quest.description,completedAt:now,kind:'quest'});
@@ -468,13 +496,14 @@ class QuestStore {
         const project = lookupProject(payload.projectId);
         const questTitle = title(payload.title);
         const newFields = fields(payload);
+        const id = `quest-${crypto.randomUUID()}`;
+        if (own(payload,'recurrence')) newFields.recurrence = editRecurrence(payload.recurrence,id,null,null,payload);
         let note;
         if (payload.sourcePath != null) {
           const relative = relativePath(payload.sourcePath);
           note = scan.notes.find(value => value.relative === relative);
           if (!note || !state.materials.some(value => value.path === relative && value.projectId === project.id)) fail('Выберите материал этого проекта.', 'UNSAFE_PATH');
         } else note = await this._groupNote(project,scan,writes);
-        const id = `quest-${crypto.randomUUID()}`;
         appendTask(note,id,questTitle,{description:'',status:'todo',onBoard:false,urgent:false,plannedDate:null,dueDate:null,createdAt:now,updatedAt:now,completedAt:null,...newFields});
         metadata.questProjects[id] = project.id;
         saveNote(note);
@@ -483,9 +512,14 @@ class QuestStore {
       case 'quest.update': {
         const {quest,note,task} = lookupQuest(payload.id);
         const update = {...fields(payload),updatedAt:now};
+        if (own(payload,'recurrence')) {
+          update.recurrence = editRecurrence(payload.recurrence,quest.id,task.detail.recurrence,quest.recurrence,payload);
+          if (update.recurrence || quest.recurrence) update.onBoard = false;
+          if (update.recurrence && !quest.recurrence && task.checked) { editCheckbox(note,task,{checked:false}); update.status = 'todo'; update.completedAt = null; }
+        }
         if (own(payload,'projectId')) { lookupProject(payload.projectId); metadata.questProjects[quest.id] = payload.projectId; }
-        if (own(payload,'title')) { editCheckbox(note,task,{title:title(payload.title)}); if (metadata.taskOverrides[quest.id]) delete metadata.taskOverrides[quest.id].title; }
-        else if (!task.anchored) editCheckbox(note,task);
+        if (own(payload,'title')) { editCheckbox(note,task,{title:title(payload.title),checked:update.status === 'todo' ? false : task.checked}); if (metadata.taskOverrides[quest.id]) delete metadata.taskOverrides[quest.id].title; }
+        else if (!task.anchored) editCheckbox(note,task,{checked:update.status === 'todo' ? false : task.checked});
         if (own(payload,'description') && metadata.taskOverrides[quest.id]) delete metadata.taskOverrides[quest.id].description;
         setDetail(note,quest.id,update);
         for (const event of metadata.completions.filter(value => value.questId === quest.id && value.kind === 'quest')) {
@@ -499,7 +533,7 @@ class QuestStore {
       case 'quest.status': {
         if (!VALID_STATUSES.has(payload.status)) fail('Неизвестный статус задания.');
         const target = lookupQuest(payload.id);
-        if (changeStatus(target,payload.status)) saveNote(target.note);
+        if (changeStatus(target,payload.status,payload.occurrenceDate)) saveNote(target.note);
         break;
       }
       case 'quest.board': {
@@ -508,8 +542,9 @@ class QuestStore {
         if (hasStatus && !payload.onBoard) fail('При удалении с доски нельзя менять статус задания.');
         if (hasStatus && !VALID_STATUSES.has(payload.status)) fail('Неизвестный статус задания.');
         const target = lookupQuest(payload.id);
+        if (payload.onBoard && target.quest.recurrence) fail('Повторяющиеся задания планируются в календаре, а не на доске.');
         const statusChanged = hasStatus && changeStatus(target,payload.status);
-        if (target.quest.onBoard !== payload.onBoard || statusChanged) {
+        if (target.quest.onBoard !== payload.onBoard || target.task.detail.onBoard === true && !payload.onBoard || statusChanged) {
           if (!target.task.anchored && !statusChanged) editCheckbox(target.note,target.task);
           setDetail(target.note,target.quest.id,{onBoard:payload.onBoard});
           saveNote(target.note);
@@ -530,19 +565,11 @@ class QuestStore {
         const event = state.completions.find(value => value.id === payload.id);
         if (!event) fail('Запись истории не найдена.', 'NOT_FOUND');
         const {quest,note,task} = lookupQuest(event.questId);
-        const stored = metadata.completions.find(value => value.id === event.id);
-        const wasLatest = metadata.completions.filter(value => value.questId === quest.id && value.kind === 'recurrence').at(-1)?.id === event.id;
         metadata.completions = metadata.completions.filter(value => value.id !== event.id);
         if (event.kind === 'recurrence') {
-          for (const later of metadata.completions.filter(value => value.previousCompletionId === event.id)) {
-            later.previousCompletionId = stored?.previousCompletionId || null;
-            later.previousRecurrence = stored?.previousRecurrence || {intervalDays:quest.recurrence.intervalDays,nextDate:null,lastCompletedAt:null};
-            later.previousPlannedDate = stored?.previousPlannedDate ?? null;
-            later.previousStatus = stored?.previousStatus || 'todo';
-          }
-          if (wasLatest && stored) {
-            editCheckbox(note,task,{checked:false});
-            setDetail(note,quest.id,{status:stored.previousStatus === 'in_progress' ? 'in_progress' : 'todo',updatedAt:now,plannedDate:stored.previousPlannedDate ?? null,recurrence:recurrence(stored.previousRecurrence) || quest.recurrence,completedAt:null});
+          if (quest.recurrence) {
+            const nextRule = recurrenceRuntime(quest.recurrence,quest.id,metadata.completions,localDate(stamp),false);
+            setDetail(note,quest.id,{updatedAt:now,recurrence:preserveRecurrenceFields(task.detail.recurrence,nextRule)});
             saveNote(note);
           }
         } else {

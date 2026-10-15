@@ -81,10 +81,11 @@ async function geometry() {
     const book = document.querySelector('#book');
     const paper = document.querySelector('.pages');
     const matrix = new DOMMatrix(getComputedStyle(stage).transform);
-    const controls = [...document.querySelectorAll('.bookmarks button,.book-bar button')].map(element => ({name:element.getAttribute('aria-label') || element.textContent.trim(),rect:rect(element)}));
+    const controls = [...document.querySelectorAll('.bookmarks button,.book-bar button')].map(element => ({name:element.getAttribute('aria-label') || element.textContent.trim(),bookmark:!!element.closest('.bookmarks'),rect:rect(element)}));
+    const labels = [...document.querySelectorAll('.bookmark-label')].map(element => { const transform = new DOMMatrix(getComputedStyle(element).transform); return {text:element.textContent,rect:rect(element),angle:Math.atan2(transform.b,transform.a)*180/Math.PI,determinant:transform.a*transform.d-transform.b*transform.c}; });
     return {
       viewport:{width:innerWidth,height:innerHeight}, document:{width:document.documentElement.scrollWidth,height:document.documentElement.scrollHeight},
-      stage:rect(stage),book:rect(book),paper:rect(paper),bookmarks:rect(document.querySelector('.bookmarks')),header:rect(document.querySelector('.book-bar')),controls,
+      stage:rect(stage),book:rect(book),paper:rect(paper),bookmarks:rect(document.querySelector('.bookmarks')),header:rect(document.querySelector('.book-bar')),controls,labels,
       fixed:{stageWidth:stage.offsetWidth,stageHeight:stage.offsetHeight,bookWidth:book.offsetWidth,bookHeight:book.offsetHeight,paperWidth:paper.offsetWidth,paperHeight:paper.offsetHeight},
       matrix:{a:matrix.a,b:matrix.b,c:matrix.c,d:matrix.d},
       view:document.querySelector('[data-view][aria-current="page"]')?.dataset.view,
@@ -115,8 +116,15 @@ function assertGeometry(current, rotated, baseline) {
   if(rotated) {
     assert.ok(current.bookmarks.x+current.bookmarks.width/2>current.book.x+current.book.width*.8,'all bookmarks move to the right edge of the book');
     assert.ok(current.header.x+current.header.width/2>current.book.x+current.book.width*.8,'header controls rotate to the right side');
-    for(const control of current.controls) assert.ok(control.rect.height>control.rect.width || /Свернуть|Закрыть приложение/.test(control.name),'bookmark and wide header labels rotate with the cover');
+    for(const control of current.controls.filter(item=>!item.bookmark)) assert.ok(control.rect.height>control.rect.width || /Свернуть|Закрыть приложение/.test(control.name),'wide header controls rotate with the cover');
   } else assert.ok(current.bookmarks.y<current.book.y,'bookmarks return above the landscape cover');
+  assert.equal(current.labels.length,4,'every bookmark has an independently readable label');
+  for(const label of current.labels) {
+    assert.ok(Math.abs(label.angle+angle)<.01,`${label.text} stays horizontal in both orientations`);
+    assert.ok(label.determinant>0,'bookmark text is not mirrored');
+    assert.ok(label.rect.width>label.rect.height,'bookmark label reads across the page');
+    assert.ok(label.rect.x>=-epsilon && label.rect.right<=current.viewport.width+epsilon,'bookmark label is not clipped by the native window');
+  }
 }
 
 async function screenshot(name) {
@@ -248,16 +256,23 @@ async function apiRoundTrip() {
 
 async function recurrence() {
   const before = (await state()).quests.find(q => q.id === 'fixture-recurring');
-  let current = await dispatch('quest.status', { id: 'fixture-recurring', status: 'done' });
+  assert.equal(before.recurrence.startDate,null,'undated legacy routines do not invent a calendar date');
+  await selectView('calendar');
+  const day = await page.locator('.calendar-day.today').getAttribute('data-day');
+  await dispatch('quest.update', {id:before.id,recurrence:{kind:'interval',intervalDays:2,startDate:day}});
+  let current = await dispatch('quest.status', { id: 'fixture-recurring', status: 'done', occurrenceDate:day });
   const recurring = current.quests.find(q => q.id === 'fixture-recurring');
   assert.notEqual(recurring.status, 'done');
-  assert.ok(recurring.plannedDate);
-  assert.equal(recurring.recurrence.nextDate, recurring.plannedDate);
+  assert.ok(recurring.recurrence.nextDate>day);
+  assert.equal(recurring.plannedDate,before.plannedDate,'a series does not overwrite the one-off planning field');
+  assert.equal(recurring.onBoard,false);
   assert.equal(current.completions.filter(c => c.questId === recurring.id).length, 1);
   const event = current.completions.find(c => c.questId === recurring.id);
+  assert.equal(event.occurrenceDate,day);
   current = await dispatch('completion.undo', { id: event.id });
   assert.equal(current.completions.filter(c => c.questId === recurring.id).length, 0);
   assert.equal(current.quests.find(q => q.id === recurring.id).plannedDate, before.plannedDate);
+  assert.equal(current.quests.find(q => q.id === recurring.id).recurrence.nextDate,day);
 }
 
 async function rotationSmoke() {
@@ -380,7 +395,7 @@ async function uiSmoke() {
   await page.getByRole('textbox', { name: 'Описание', exact: true }).fill('Первое описание задания.\nВторая строка.');
   await page.locator('#edit-project').selectOption(project.id);
   await page.getByLabel('Срочное задание', { exact: true }).check();
-  assert.equal(await page.getByLabel(/Повторение|Периодичность/).count(), 0, 'no recurrence editor');
+  assert.equal(await page.getByLabel('Повторение', {exact:true}).count(), 1, 'recurrence can be configured explicitly');
   await saveEditor();
   let quest = (await state()).quests.find(item => item.title === 'Интерфейсное задание');
   assert.ok(quest?.urgent);
@@ -396,6 +411,10 @@ async function uiSmoke() {
   await selectView('calendar');
   const today = await page.locator('.calendar-day.today').getAttribute('data-day');
   assert.ok(today);
+  for (let index=0;index<4;index++) await page.locator('[data-action="next-month"]').click();
+  assert.equal(await page.locator('.calendar-day.today').count(),0,'navigation leaves the current month');
+  await page.locator('[data-action="today"]').click();
+  assert.equal(await page.locator('.calendar-day.today').getAttribute('aria-pressed'),'true','Today returns to the current month and selects today');
   const planned = new Date(`${today}T12:00:00Z`);
   planned.setUTCDate(planned.getUTCDate() + 1);
   const tomorrow = planned.toISOString().slice(0, 10);
@@ -505,9 +524,115 @@ async function uiSmoke() {
   await screenshot('journal.png');
 }
 
+async function calendarRoutines() {
+  await selectView('calendar');
+  await page.locator('[data-action="today"]').click();
+  const today = await page.locator('.calendar-day.today').getAttribute('data-day');
+  const plusDays = (day, amount) => { const date=new Date(`${day}T12:00:00Z`);date.setUTCDate(date.getUTCDate()+amount);return date.toISOString().slice(0,10); };
+  const weekday = day => new Date(`${day}T12:00:00Z`).getUTCDay() || 7;
+  const showDay = async day => {
+    await selectView('calendar');
+    await page.locator('[data-action="today"]').click();
+    const monthDifference=(Number(day.slice(0,4))-Number(today.slice(0,4)))*12+Number(day.slice(5,7))-Number(today.slice(5,7));
+    for(let i=0;i<Math.abs(monthDifference);i++) await page.locator(`[data-action="${monthDifference<0?'previous-month':'next-month'}"]`).click();
+    await page.locator(`[data-day="${day}"]`).click();
+  };
+  const saveEditor = async () => {await page.locator('#edit-form button[type="submit"]').click();await page.locator('#editor').waitFor({state:'hidden'});};
+  const base=await state();
+  const projectId=base.projects[0].id;
+  let current=await dispatch('quest.create',{projectId,title:'Занятия по вторникам и четвергам',description:'Проверка календаря без дублирования заданий.'});
+  const weekly=current.quests.find(item=>item.title==='Занятия по вторникам и четвергам');
+  await dispatch('quest.board',{id:weekly.id,onBoard:true});
+  await page.locator('[data-action="schedule-existing"]').click();
+  await page.locator('#schedule-search').fill(weekly.title);
+  await page.locator(`input[name="questId"][value="${weekly.id}"]`).check();
+  const tomorrow=plusDays(today,1);
+  await page.getByLabel('День выполнения',{exact:true}).fill(tomorrow);
+  await page.locator('#schedule-form button[type="submit"]').click();
+  await page.locator('#editor').waitFor({state:'hidden'});
+  let saved=(await state()).quests.find(item=>item.id===weekly.id);
+  assert.equal(saved.plannedDate,tomorrow);
+  assert.equal(saved.onBoard,true,'planning an existing one-off task does not alter its board membership');
+
+  await showDay(tomorrow);
+  await page.locator(`.day-task [data-show-quest="${weekly.id}"]`).click();
+  await page.locator(`#editor [data-edit-quest="${weekly.id}"]`).click();
+  await page.locator('#edit-repeat').selectOption('weekly');
+  await page.locator('#edit-start').fill(today);
+  for(const input of await page.locator('input[name="weekdays"]').all()) await input.uncheck();
+  await page.locator('input[name="weekdays"][value="2"]').check();
+  await page.locator('input[name="weekdays"][value="4"]').check();
+  await saveEditor();
+  saved=(await state()).quests.find(item=>item.id===weekly.id);
+  assert.deepEqual(saved.recurrence.weekdays,[2,4]);
+  assert.equal(saved.recurrence.kind,'weekly');
+  assert.equal(saved.onBoard,false,'a scheduled routine leaves the board');
+  assert.equal((await state()).quests.length,base.quests.length+1,'a recurring series is one task');
+  await showDay(plusDays(today,14));
+  const cells=await page.locator('.calendar-day').evaluateAll(elements=>elements.map(element=>({day:element.dataset.day,text:element.innerText})));
+  let expectedOccurrences=0;
+  for(const cell of cells) {
+    const expected=cell.day>=today && [2,4].includes(weekday(cell.day));
+    if(expected) expectedOccurrences++;
+    // Generic fixtures can fill a day; the count and day details remain authoritative.
+    if(!expected) assert.ok(!cell.text.includes(weekly.title),'weekly routine does not appear on another weekday');
+  }
+  assert.ok(expectedOccurrences>=4,'calendar projects more than the next routine occurrence');
+  const upcoming=Array.from({length:14},(_,i)=>plusDays(today,i)).filter(day=>[2,4].includes(weekday(day)));
+  for(const day of upcoming.slice(0,3)) {
+    await showDay(day);
+    assert.equal(await page.locator(`.day-task [data-show-quest="${weekly.id}"]`).count(),1,`routine appears on ${day}`);
+  }
+  await showDay(upcoming[0]);
+  await page.locator(`[data-complete="${weekly.id}"][data-occurrence-date="${upcoming[0]}"]`).click();
+  await eventually(async()=> (await state()).completions.some(item=>item.questId===weekly.id&&item.occurrenceDate===upcoming[0]),'a single calendar occurrence is completed');
+  let completion=(await state()).completions.find(item=>item.questId===weekly.id&&item.occurrenceDate===upcoming[0]);
+  assert.notEqual((await state()).quests.find(item=>item.id===weekly.id).status,'done');
+  assert.equal(await page.locator(`[data-complete="${weekly.id}"][data-occurrence-date="${upcoming[0]}"]`).count(),0,'completed occurrence cannot be ticked twice');
+  await page.locator(`[data-undo-completion="${completion.id}"]`).click();
+  await eventually(async()=> !(await state()).completions.some(item=>item.id===completion.id),'calendar completion can be undone');
+  await page.locator(`[data-complete="${weekly.id}"][data-occurrence-date="${upcoming[0]}"]`).click();
+  await eventually(async()=> (await state()).completions.some(item=>item.questId===weekly.id&&item.occurrenceDate===upcoming[0]),'calendar completion is restored');
+  await showDay(upcoming[1]);
+  assert.equal(await page.locator(`[data-complete="${weekly.id}"][data-occurrence-date="${upcoming[1]}"]`).count(),1,'the following session remains available');
+  await screenshot('weekly-calendar.png');
+
+  await page.locator('[data-action="new-quest-on-day"]').click();
+  await page.getByLabel('Название',{exact:true}).fill('Публикация через день');
+  await page.locator('#edit-repeat').selectOption('interval');
+  await page.locator('#edit-interval').fill('2');
+  await page.locator('#edit-start').fill(today);
+  await saveEditor();
+  const interval=(await state()).quests.find(item=>item.title==='Публикация через день');
+  assert.equal(interval.recurrence.intervalDays,2);
+  for(let i=0;i<5;i++) {
+    await showDay(plusDays(today,i));
+    assert.equal(await page.locator(`.day-task [data-show-quest="${interval.id}"]`).count(),i%2===0?1:0,'every-other-day schedule is anchored to its start');
+  }
+  await selectView('board');
+  for(const id of [weekly.id,interval.id,'fixture-recurring']) {
+    assert.equal(await page.locator(`[data-drag-quest="${id}"]`).count(),0,'routines are not offered as board cards or backlog');
+  }
+  assertGeometry(await geometry(),true);
+  await screenshot('readable-bookmarks.png');
+  await application.close();application=null;
+  await launch();
+  const restored=await state();
+  assert.deepEqual(restored.quests.find(item=>item.id===weekly.id).recurrence.weekdays,[2,4]);
+  assert.equal(restored.quests.find(item=>item.id===interval.id).recurrence.intervalDays,2);
+  assert.ok(restored.completions.some(item=>item.questId===weekly.id&&item.occurrenceDate===upcoming[0]),'completion remains after reopening the app');
+  await showDay(upcoming[1]);
+  assert.equal(await page.locator(`.day-task [data-show-quest="${weekly.id}"]`).count(),1,'future sessions persist across restart');
+}
+
 async function main() {
   await fixture();
   await launch();
+  if (process.env.QUEST_BOOK_TEST === 'calendar') {
+    await check('calendar planning and routines', calendarRoutines);
+    assert.deepEqual(rendererErrors, [], 'renderer must not produce uncaught errors');
+    return;
+  }
   await check('imports a generic source vault and excludes employer projects', async () => {
     const current = await state();
     assert.equal(current.quests.some(q => q.id === 'fixture-check'), true);
@@ -519,6 +644,7 @@ async function main() {
   await check('existing recurrence records history and remains active', recurrence);
   await check('physical rotation, uniform fit, rapid navigation, reduced motion and cover/draft recovery', rotationSmoke);
   await check('book UI, editors, history, calendar, Kanban and fixed logical geometry', uiSmoke);
+  await check('existing task planning, weekly and interval routines, individual completion, readable bookmarks and restart', calendarRoutines);
   assert.deepEqual(rendererErrors, [], 'renderer must not produce uncaught errors');
   process.stdout.write(`\n${checks.length} desktop smoke checks passed.\n`);
 }

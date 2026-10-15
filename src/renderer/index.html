@@ -10,7 +10,7 @@
 <body>
   <div id="book-stage" class="book-stage">
   <main id="book" class="book" aria-label="Книга проектов">
-    <nav class="tabs bookmarks" aria-label="Закладки книги"><button data-view="journal" aria-current="page">Проекты</button><button data-view="history">История</button><button data-view="calendar">Календарь</button><button data-view="board">Доска</button></nav>
+    <nav class="tabs bookmarks" aria-label="Закладки книги"><button data-view="journal" aria-current="page"><span class="bookmark-label">Проекты</span></button><button data-view="history"><span class="bookmark-label">История</span></button><button data-view="calendar"><span class="bookmark-label">Календарь</span></button><button data-view="board"><span class="bookmark-label">Доска</span></button></nav>
     <header class="book-bar"><span class="brand">Книга проектов</span><span class="bar-space"></span><button class="text-button add-button" data-action="new-quest" title="Добавить задание">+ Задание</button><button class="window-button" data-action="minimize" aria-label="Свернуть окно" title="Свернуть">−</button><button class="window-button" data-action="close" aria-label="Закрыть приложение" title="Закрыть приложение">×</button></header>
     <div class="pages">
       <div class="page-art" aria-hidden="true"><i class="paper-edge edge-left"></i><i class="paper-edge edge-right"></i><i class="paper-crease crease-left"></i><i class="paper-crease crease-right"></i><i class="paper-crease crease-left crease-top"></i><i class="paper-crease crease-right crease-top"></i></div>
@@ -25,6 +25,7 @@
   </section>
   <dialog id="editor" aria-labelledby="dialog-title"><div id="dialog-content"></div></dialog>
   <div id="announcer" class="sr-only" aria-live="polite"></div>
+  <script src="schedule.js"></script>
   <script src="app.js"></script>
 </body>
 </html>

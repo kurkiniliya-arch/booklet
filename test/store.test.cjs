@@ -200,14 +200,20 @@ test('bootstrap recurring quest retains interval, records history, schedules cal
   const quest = state.quests.find(value => value.id === 'repeat-video');
   assert.equal(quest.recurrence.intervalDays,2);
   assert.equal(quest.sourcePath,SOURCE);
+  assert.equal(quest.recurrence.startDate,null);
+  await assert.rejects(f.dispatch('quest.status',{id:quest.id,status:'done'},state),{code:'VALIDATION'});
+  state = await f.dispatch('quest.update',{id:quest.id,recurrence:{kind:'interval',intervalDays:2,startDate:'2026-10-14'}},state);
   state = await f.dispatch('quest.status',{id:quest.id,status:'done'},state);
   assert.equal(state.quests.find(value => value.id === quest.id).status,'todo');
-  assert.equal(state.quests.find(value => value.id === quest.id).plannedDate,'2026-10-16');
+  assert.equal(state.quests.find(value => value.id === quest.id).plannedDate,null);
+  assert.equal(state.quests.find(value => value.id === quest.id).recurrence.nextDate,'2026-10-16');
   assert.equal(state.completions[0].kind,'recurrence');
+  assert.equal(state.completions[0].occurrenceDate,'2026-10-14');
   assert.match(await fs.readFile(f.source,'utf8'),/- \[ \] Видео через день \^task-repeat-video/);
   state = await f.dispatch('completion.undo',{id:state.completions[0].id},state);
   assert.equal(state.quests.find(value => value.id === quest.id).plannedDate,null);
   assert.equal(state.quests.find(value => value.id === quest.id).recurrence.lastCompletedAt,null);
+  assert.equal(state.quests.find(value => value.id === quest.id).recurrence.nextDate,'2026-10-14');
   assert.equal(state.completions.length,0);
   assert.equal((await f.store.load()).quests.length,2,'bootstrap does not duplicate on refresh');
 });
@@ -313,7 +319,7 @@ test('external reopen invalidates old completion date instead of reusing it when
 });
 
 test('undoing repeated completions in arbitrary order does not resurrect a removed occurrence',async t => {
-  const f = await fixture(t,{content:CONTENT.replace('blocked_by: []','recurrence: {intervalDays: 2, nextDate: null, lastCompletedAt: null}\n    blocked_by: []')});
+  const f = await fixture(t,{content:CONTENT.replace('blocked_by: []','recurrence: {intervalDays: 2, startDate: 2026-10-14, nextDate: null, lastCompletedAt: null}\n    blocked_by: []')});
   let state = await f.dispatch('quest.status',{id:'fixture-check',status:'done'});
   const first = state.completions[0].id;
   state = await f.dispatch('quest.status',{id:'fixture-check',status:'done'},state);

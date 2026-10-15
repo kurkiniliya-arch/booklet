@@ -56,6 +56,69 @@ async function check(name, run) {
   process.stdout.write(`PASS ${name}\n`);
 }
 
+async function settled(view) {
+  await page.waitForSelector('body.layout-ready:not(.book-turning)', { timeout: 15000 });
+  if (view) await page.waitForFunction(expected => document.querySelector(`[data-view="${expected}"]`)?.getAttribute('aria-current') === 'page', view);
+  // The final CSS transform and native resize must have reached a painted frame.
+  await page.evaluate(() => Promise.race([
+    new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))),
+    new Promise(resolve => setTimeout(resolve, 400)),
+  ]));
+  assert.equal(await page.locator('body.book-turning').count(), 0);
+}
+
+async function selectView(view) {
+  await settled();
+  await page.locator(`[data-view="${view}"]`).click();
+  await settled(view);
+}
+
+async function geometry() {
+  await settled();
+  const dom = await page.evaluate(() => {
+    const rect = element => { const box = element.getBoundingClientRect(); return { x:box.x,y:box.y,width:box.width,height:box.height,right:box.right,bottom:box.bottom }; };
+    const stage = document.querySelector('#book-stage');
+    const book = document.querySelector('#book');
+    const paper = document.querySelector('.pages');
+    const matrix = new DOMMatrix(getComputedStyle(stage).transform);
+    const controls = [...document.querySelectorAll('.bookmarks button,.book-bar button')].map(element => ({name:element.getAttribute('aria-label') || element.textContent.trim(),rect:rect(element)}));
+    return {
+      viewport:{width:innerWidth,height:innerHeight}, document:{width:document.documentElement.scrollWidth,height:document.documentElement.scrollHeight},
+      stage:rect(stage),book:rect(book),paper:rect(paper),bookmarks:rect(document.querySelector('.bookmarks')),header:rect(document.querySelector('.book-bar')),controls,
+      fixed:{stageWidth:stage.offsetWidth,stageHeight:stage.offsetHeight,bookWidth:book.offsetWidth,bookHeight:book.offsetHeight,paperWidth:paper.offsetWidth,paperHeight:paper.offsetHeight},
+      matrix:{a:matrix.a,b:matrix.b,c:matrix.c,d:matrix.d},
+      view:document.querySelector('[data-view][aria-current="page"]')?.dataset.view,
+    };
+  });
+  dom.native = await application.evaluate(({BrowserWindow}) => BrowserWindow.getAllWindows()[0].getBounds());
+  return dom;
+}
+
+function assertGeometry(current, rotated, baseline) {
+  const epsilon = 1.6;
+  const scaleX = Math.hypot(current.matrix.a,current.matrix.b);
+  const scaleY = Math.hypot(current.matrix.c,current.matrix.d);
+  assert.ok(Math.abs(scaleX-scaleY)<.00001,'physical book uses one uniform scale');
+  const angle = Math.atan2(current.matrix.b,current.matrix.a)*180/Math.PI;
+  assert.ok(Math.abs(angle-(rotated?90:0))<.01,`stage angle is ${rotated?90:0} degrees, actual ${angle}`);
+  assert.equal(current.fixed.stageWidth,1140);
+  assert.equal(current.fixed.stageHeight,750);
+  if(baseline) assert.deepEqual(current.fixed,baseline.fixed,'CSS book and paper dimensions do not reflow on native resize');
+  const targetRatio=rotated?750/1140:1140/750;
+  assert.ok(Math.abs(current.native.width/current.native.height-targetRatio)<.003,'native window swaps aspect and uniformly fits the display');
+  assert.ok(Math.abs(current.book.width/current.book.height-(rotated?current.fixed.bookHeight/current.fixed.bookWidth:current.fixed.bookWidth/current.fixed.bookHeight))<.003,'physical cover aspect is preserved');
+  for(const [name,box] of [['stage',current.stage],['book',current.book],...current.controls.map(control=>[control.name,control.rect])]) {
+    assert.ok(box.x>=-epsilon&&box.y>=-epsilon&&box.right<=current.viewport.width+epsilon&&box.bottom<=current.viewport.height+epsilon,`${name} stays inside viewport: ${JSON.stringify({box,viewport:current.viewport})}`);
+  }
+  assert.ok(current.document.width<=current.viewport.width+1&&current.document.height<=current.viewport.height+1,'document has no viewport overflow');
+  assert.ok(Math.abs(current.native.width-current.viewport.width)<=1&&Math.abs(current.native.height-current.viewport.height)<=1,'native and client dimensions agree after settling');
+  if(rotated) {
+    assert.ok(current.bookmarks.x+current.bookmarks.width/2>current.book.x+current.book.width*.8,'all bookmarks move to the right edge of the book');
+    assert.ok(current.header.x+current.header.width/2>current.book.x+current.book.width*.8,'header controls rotate to the right side');
+    for(const control of current.controls) assert.ok(control.rect.height>control.rect.width || /Свернуть|Закрыть приложение/.test(control.name),'bookmark and wide header labels rotate with the cover');
+  } else assert.ok(current.bookmarks.y<current.book.y,'bookmarks return above the landscape cover');
+}
+
 async function screenshot(name) {
   const wasVisible = await application.evaluate(({ BrowserWindow }) => {
     const window = BrowserWindow.getAllWindows()[0];
@@ -113,6 +176,7 @@ async function launch() {
   page.on('pageerror', error => rendererErrors.push(error.message));
   await page.waitForFunction(() => Boolean(window.questBook));
   await eventually(async () => (await state()).connection.connected, 'temporary vault connected');
+  await settled();
 }
 
 async function sourceSyncAndConflict() {
@@ -196,18 +260,87 @@ async function recurrence() {
   assert.equal(current.quests.find(q => q.id === recurring.id).plannedDate, before.plannedDate);
 }
 
+async function rotationSmoke() {
+  await selectView('journal');
+  const baseline=await geometry();
+  assertGeometry(baseline,false);
+  const initial=(await state()).quests.find(quest=>quest.id==='fixture-check');
+  await dispatch('quest.board',{id:initial.id,onBoard:true});
+  await selectView('board');
+  const portrait=await geometry();
+  assertGeometry(portrait,true,baseline);
+  const paper=portrait.paper;
+  const upper=await page.locator('.backlog-page').boundingBox();
+  const lower=await page.locator('.board-page').boundingBox();
+  assert.ok(Math.abs(upper.height-lower.height)<1,'board leaves have equal physical heights');
+  assert.ok(Math.abs((upper.y+upper.height)-(paper.y+paper.height/2))<2,'board leaf boundary aligns with the rotated physical fold');
+  assert.equal(await page.locator('.board-card[data-drag-quest="fixture-check"]').count(),1,'rotation preserves selected cards');
+  await screenshot('rotated-book.png');
+
+  await selectView('journal');
+  // Feed successive navigation intents in one browser task, while the previous
+  // physical turn is still running. No asynchronous test click waits hide races.
+  await page.evaluate(()=>['board','journal','board','history'].forEach(view=>document.querySelector(`[data-view="${view}"]`).click()));
+  await settled('history');
+  assertGeometry(await geometry(),false,baseline);
+  await page.evaluate(()=>['board','journal','board'].forEach(view=>document.querySelector(`[data-view="${view}"]`).click()));
+  await settled('board');
+  assertGeometry(await geometry(),true,baseline);
+  assert.equal((await state()).quests.find(quest=>quest.id===initial.id).onBoard,true);
+
+  await page.emulateMedia({reducedMotion:'reduce'});
+  await page.evaluate(()=>{
+    const stage=document.querySelector('#book-stage');
+    window.__rotationAnimationCalls=0;
+    window.__originalStageAnimate=stage.animate;
+    stage.animate=function(...args){window.__rotationAnimationCalls++;return window.__originalStageAnimate.apply(this,args);};
+  });
+  try {
+    await selectView('journal');
+    assertGeometry(await geometry(),false,baseline);
+    await selectView('board');
+    assertGeometry(await geometry(),true,baseline);
+    assert.equal(await page.evaluate(()=>window.__rotationAnimationCalls),0,'reduced motion uses final geometry without a rotate/shrink animation');
+  } finally {
+    await page.evaluate(()=>{document.querySelector('#book-stage').animate=window.__originalStageAnimate;delete window.__originalStageAnimate;delete window.__rotationAnimationCalls;});
+    await page.emulateMedia({reducedMotion:'no-preference'});
+  }
+
+  await selectView('journal');
+  await page.locator('#journal-search').fill('Проверить сервис извне');
+  await page.locator('[data-quest="fixture-check"]').click();
+  await page.locator('[data-edit-quest="fixture-check"]').click();
+  const draft='Черновик переживает физический поворот и обложку.';
+  await page.getByRole('textbox',{name:'Описание',exact:true}).fill(draft);
+  await page.locator('#editor [data-action="hide-dialog"]').click();
+  await page.locator('[data-view="board"]').click();
+  await page.waitForSelector('body.book-turning');
+  await page.keyboard.press('Control+b');
+  await settled('board');
+  await page.locator('#cover-stage').waitFor({state:'visible'});
+  const cover=await application.evaluate(({BrowserWindow})=>BrowserWindow.getAllWindows()[0].getBounds());
+  assert.ok(Math.abs(cover.width/cover.height-410/580)<.003,'close during a turn settles to upright cover dimensions');
+  await page.keyboard.press('Control+b');
+  await settled('board');
+  assertGeometry(await geometry(),true,baseline);
+  assert.equal((await state()).quests.find(quest=>quest.id===initial.id).onBoard,true,'cover transition does not modify board membership');
+  await page.locator('[data-action="resume-draft"]').click();
+  assert.equal(await page.getByRole('textbox',{name:'Описание',exact:true}).inputValue(),draft,'a parked draft survives rotation, cover and reopening');
+  await page.locator('[data-action="cancel-draft"]').click();
+  assert.equal((await state()).quests.find(quest=>quest.id===initial.id).description,initial.description,'geometry controls never save an unsaved draft');
+  await dispatch('quest.board',{id:initial.id,onBoard:initial.onBoard});
+  await selectView('journal');
+  await page.locator('#journal-search').fill('');
+}
+
 async function uiSmoke() {
   const book = page.locator('#book');
   await book.waitFor({ state: 'visible' });
   const initialBounds = await book.boundingBox();
   const windowBounds = await application.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].getBounds());
   assert.ok(initialBounds.width > 500 && initialBounds.height > 300);
-  for (const name of ['История', 'Календарь', 'Доска', 'Проекты']) {
-    await page.getByRole('button', { name, exact: true }).click();
-    const bounds = await book.boundingBox();
-    assert.equal(bounds.width, initialBounds.width, `${name}: book width must stay fixed`);
-    assert.equal(bounds.height, initialBounds.height, `${name}: book height must stay fixed`);
-  }
+  const initialGeometry=await geometry();
+  for (const view of ['history', 'calendar', 'board', 'journal']) { await selectView(view); assertGeometry(await geometry(),view==='board',initialGeometry); }
   const bookmarkBounds = await page.locator('[data-view="journal"]').boundingBox();
   assert.ok(bookmarkBounds.y >= 0 && bookmarkBounds.y < initialBounds.y, 'bookmarks protrude above the cover and stay within the window');
   const docSize = await page.evaluate(() => ({
@@ -218,9 +351,11 @@ async function uiSmoke() {
   }));
   assert.ok(docSize.height <= docSize.viewportHeight && docSize.width <= docSize.viewportWidth, 'long task lists must not make the window scroll');
   await page.getByRole('button', { name: 'Закрыть книгу', exact: true }).click();
+  await settled();
   await page.locator('#cover-stage').waitFor({ state: 'visible' });
   await eventually(async () => (await application.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].getBounds())).width < windowBounds.width, 'native window becomes a cover');
   await page.getByRole('button', { name: 'Открыть книгу →', exact: true }).click();
+  await settled('journal');
   await book.waitFor({ state: 'visible' });
   await eventually(async () => (await book.boundingBox()).width === initialBounds.width, 'open book returns to its previous fixed width');
   assert.ok(await page.locator('.tree').evaluate(element => element.scrollHeight > element.clientHeight), 'long task list scrolls inside the book');
@@ -258,7 +393,7 @@ async function uiSmoke() {
   await page.locator(`[data-urgent="${quest.id}"]`).click();
   await eventually(async () => (await state()).quests.find(item => item.id === quest.id).urgent, 'urgency set in UI');
 
-  await page.locator('[data-view="calendar"]').click();
+  await selectView('calendar');
   const today = await page.locator('.calendar-day.today').getAttribute('data-day');
   assert.ok(today);
   const planned = new Date(`${today}T12:00:00Z`);
@@ -274,7 +409,7 @@ async function uiSmoke() {
   assert.ok(await page.locator(`.calendar-day[data-day="${tomorrow}"]`).innerText().then(value => value.includes('Интерфейсное задание')));
   await screenshot('calendar.png');
 
-  await page.locator('[data-view="board"]').click();
+  await selectView('board');
   assert.equal(await book.evaluate(element => element.classList.contains('board-mode')), true);
   assert.equal(await page.locator('.board-card').count(), 0, 'existing tasks do not automatically fill the board');
   assert.ok(await page.locator('.backlog-list').evaluate(element => element.scrollHeight > element.clientHeight), 'backlog scrolls inside the upper page');
@@ -299,8 +434,10 @@ async function uiSmoke() {
   await page.locator(`[data-board-add="${quest.id}"]`).click();
   await eventually(async () => (await state()).quests.find(item => item.id === quest.id).onBoard, 'task can be selected again');
   await page.locator('[data-action="close-book"]').click();
+  await settled();
   await page.locator('#cover-stage').waitFor({ state: 'visible' });
   await page.locator('[data-action="open-book"]').click();
+  await settled('board');
   assert.equal(await book.evaluate(element => element.classList.contains('board-mode')), true, 'opening the cover returns to the board orientation');
   const card = page.locator(`.board-card[data-drag-quest="${quest.id}"]`);
   await card.dragTo(page.locator('.board-column[data-status="done"]'));
@@ -314,7 +451,7 @@ async function uiSmoke() {
   assert.equal((await state()).quests.find(item => item.id === quest.id).status, 'done');
   assert.equal((await state()).completions.filter(item => item.questId === quest.id).length, 1, 'clearing a done card preserves history');
 
-  await page.locator('[data-view="history"]').click();
+  await selectView('history');
   assert.equal(await book.evaluate(element => element.classList.contains('board-mode')), false, 'leaving the board restores facing pages');
   await page.locator('#history-project').selectOption(project.id);
   assert.equal(await page.locator('[data-completion]').count(), 1);
@@ -328,7 +465,7 @@ async function uiSmoke() {
   await page.locator('[data-undo-completion]').click();
   await eventually(async () => (await state()).quests.find(item => item.id === quest.id).status !== 'done', 'undo completion from history');
 
-  await page.locator('[data-view="journal"]').click();
+  await selectView('journal');
   await page.locator('#journal-search').fill('Интерфейсное задание');
   await page.locator(`[data-quest="${quest.id}"]`).click();
   await page.locator(`[data-delete-quest="${quest.id}"]`).click();
@@ -346,8 +483,10 @@ async function uiSmoke() {
   await page.locator('[data-edit-quest="fixture-check"]').click();
   await page.getByRole('textbox', { name: 'Описание', exact: true }).fill('Несохранённый черновик должен остаться.');
   await page.keyboard.press('Control+b');
+  await settled();
   await page.locator('#cover-stage').waitFor({ state: 'visible' });
   await page.keyboard.press('Control+b');
+  await settled('journal');
   await page.locator('#editor').waitFor({ state: 'visible' });
   assert.equal(await page.getByRole('textbox', { name: 'Описание', exact: true }).inputValue(), 'Несохранённый черновик должен остаться.', 'closing and reopening the book preserves the editor draft');
   const raw = await fs.readFile(source, 'utf8');
@@ -378,7 +517,8 @@ async function main() {
   await check('source edits synchronize and stale writes preserve external content', sourceSyncAndConflict);
   await check('public API CRUD, urgency, scheduling, completion, undo and restart persistence', apiRoundTrip);
   await check('existing recurrence records history and remains active', recurrence);
-  await check('book UI, editors, history, calendar, Kanban and fixed bounds', uiSmoke);
+  await check('physical rotation, uniform fit, rapid navigation, reduced motion and cover/draft recovery', rotationSmoke);
+  await check('book UI, editors, history, calendar, Kanban and fixed logical geometry', uiSmoke);
   assert.deepEqual(rendererErrors, [], 'renderer must not produce uncaught errors');
   process.stdout.write(`\n${checks.length} desktop smoke checks passed.\n`);
 }

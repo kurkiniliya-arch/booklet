@@ -6,6 +6,7 @@ const fsp = require('node:fs/promises');
 const path = require('node:path');
 const { pathToFileURL } = require('node:url');
 const { QuestStore } = require('./store.cjs');
+const { layoutFor, centerForLayouts, boundsAtCenter } = require('./window-layout.cjs');
 
 const arg = name => {
   const exact = process.argv.indexOf(`--${name}`);
@@ -28,6 +29,9 @@ let watcher;
 let watchTimer;
 let queue = Promise.resolve();
 let openBook = true;
+let rotatedBook = false;
+let windowLayout;
+let turnAnchor;
 let pollTimer;
 let closing = false;
 const UI_URL = 'questbook://app/index.html';
@@ -127,20 +131,64 @@ function rpc(channel, work) {
     }
   });
 }
-function windowSize(open) {
-  const display = mainWindow ? screen.getDisplayMatching(mainWindow.getBounds()) : screen.getPrimaryDisplay();
-  const width = Math.min(open ? 1140 : 410, display.workAreaSize.width - 24);
-  const height = Math.min(open ? 750 : 580, display.workAreaSize.height - 24);
-  return { width: Math.max(320, width), height: Math.max(400, height), display };
+function liveWindow() {
+  if (!mainWindow || mainWindow.isDestroyed()) throw new Error('Окно книги уже закрыто.');
+  return mainWindow;
 }
-function resizeBook(open) {
+function currentDisplay() {
+  return mainWindow && !mainWindow.isDestroyed() ? screen.getDisplayMatching(mainWindow.getBounds()) : screen.getPrimaryDisplay();
+}
+function currentLayout() {
+  const bounds = liveWindow().getBounds();
+  const fit = layoutFor(currentDisplay().workArea, {open: openBook, rotated: rotatedBook});
+  return {...windowLayout, width: bounds.width, height: bounds.height, turnScale: fit.turnScale};
+}
+function applyLayout(layout, center, workArea) {
+  liveWindow().setBounds(boundsAtCenter(layout, center, workArea));
+  windowLayout = layout;
+  return currentLayout();
+}
+function resizeBook(open, rotated = rotatedBook) {
+  const window = liveWindow();
+  const work = currentDisplay().workArea;
+  const layout = layoutFor(work, {open, rotated});
+  const center = centerForLayouts(window.getBounds(), work, [layout]);
+  turnAnchor = null;
+  const result = applyLayout(layout, center, work);
   openBook = open;
-  const old = mainWindow.getBounds();
-  const { width, height, display } = windowSize(open);
-  const work = display.workArea;
-  const x = Math.max(work.x, Math.min(Math.round(old.x + (old.width - width) / 2), work.x + work.width - width));
-  const y = Math.max(work.y, Math.min(Math.round(old.y + (old.height - height) / 2), work.y + work.height - height));
-  mainWindow.setBounds({ x, y, width, height });
+  rotatedBook = rotated;
+  return {...result, turnScale: layout.turnScale};
+}
+function prepareTurn(rotated) {
+  if (!openBook) throw new Error('Сначала откройте книгу.');
+  if (turnAnchor) {
+    if (turnAnchor.rotated !== rotated) throw new Error('Дождитесь завершения поворота книги.');
+    return currentLayout();
+  }
+  if (rotatedBook === rotated) return currentLayout();
+  const window = liveWindow();
+  const display = currentDisplay();
+  const work = {...display.workArea};
+  const layout = layoutFor(work, {open: true, rotated, turning: true});
+  const finalLayout = layoutFor(work, {open: true, rotated});
+  const center = centerForLayouts(window.getBounds(), work, [layout, finalLayout]);
+  const result = applyLayout(layout, center, work);
+  turnAnchor = {rotated, displayId: display.id, workArea: work, center};
+  return result;
+}
+function finishTurn(rotated) {
+  if (!turnAnchor) return resizeBook(true, rotated);
+  if (turnAnchor.rotated !== rotated) throw new Error('Положение книги не совпадает с начатым поворотом.');
+  const display = screen.getAllDisplays().find(item => item.id === turnAnchor.displayId) || currentDisplay();
+  const work = {...display.workArea};
+  const layout = layoutFor(work, {open: true, rotated});
+  const savedCenter = turnAnchor.center;
+  const center = centerForLayouts({x: savedCenter.x, y: savedCenter.y, width: 0, height: 0}, work, [layout]);
+  const result = applyLayout(layout, center, work);
+  rotatedBook = rotated;
+  openBook = true;
+  turnAnchor = null;
+  return result;
 }
 function installHandlers() {
   rpc('questbook:load', () => refreshStore());
@@ -169,18 +217,32 @@ function installHandlers() {
     return true;
   });
   rpc('questbook:window', action => {
-    if (action === 'minimize') mainWindow.minimize();
-    else if (action === 'close') mainWindow.close();
-    else if (action === 'open-book') resizeBook(true);
-    else if (action === 'close-book') resizeBook(false);
-    else throw new Error('Неизвестное действие окна.');
-    return true;
+    const type = typeof action === 'string' ? action : action && typeof action === 'object' && !Array.isArray(action) ? action.type : null;
+    if (type === 'minimize') { liveWindow().minimize(); return true; }
+    if (type === 'close') { liveWindow().close(); return true; }
+    if (type === 'layout') return currentLayout();
+    if (type === 'close-book') return resizeBook(false);
+    if (type === 'open-book') {
+      const rotated = typeof action === 'string' || action.rotated === undefined ? rotatedBook : action.rotated;
+      if (typeof rotated !== 'boolean') throw new Error('Некорректное положение книги.');
+      return resizeBook(true, rotated);
+    }
+    if (type === 'prepare-turn' || type === 'finish-turn') {
+      if (!action || typeof action !== 'object' || typeof action.rotated !== 'boolean') throw new Error('Укажите положение книги для поворота.');
+      return type === 'prepare-turn' ? prepareTurn(action.rotated) : finishTurn(action.rotated);
+    }
+    throw new Error('Неизвестное действие окна.');
   });
 }
 async function createWindow() {
-  const { width, height } = windowSize(true);
+  const work = currentDisplay().workArea;
+  const initial = layoutFor(work, {open: true, rotated: rotatedBook});
+  const initialBounds = boundsAtCenter(initial, {x: work.x + work.width / 2, y: work.y + work.height / 2}, work);
+  openBook = true;
+  turnAnchor = null;
+  windowLayout = initial;
   mainWindow = new BrowserWindow({
-    width, height, frame: false, transparent: true, backgroundColor: '#00000000',
+    ...initialBounds, frame: false, transparent: true, backgroundColor: '#00000000',
     resizable: false, maximizable: false, fullscreenable: false, hasShadow: false,
     title: 'Книга проектов', icon: path.join(__dirname, '../assets/book.png'), show: false,
     webPreferences: { preload: path.join(__dirname, 'preload.cjs'), nodeIntegration: false, contextIsolation: true, sandbox: true, webSecurity: true, spellcheck: false }
@@ -191,7 +253,7 @@ async function createWindow() {
   mainWindow.webContents.session.setPermissionRequestHandler((_contents, _permission, callback) => callback(false));
   mainWindow.webContents.session.setPermissionCheckHandler(() => false);
   mainWindow.once('ready-to-show', () => { if (!testMode) mainWindow.show(); });
-  mainWindow.on('closed', () => { mainWindow = null; });
+  mainWindow.on('closed', () => { mainWindow = null; turnAnchor = null; windowLayout = null; });
   await mainWindow.loadURL(UI_URL);
 }
 

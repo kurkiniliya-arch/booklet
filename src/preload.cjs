@@ -17,6 +17,7 @@ contextBridge.exposeInMainWorld('questBook', {
   dispatch: command => request('questbook:dispatch', command),
   chooseVault: () => request('questbook:choose-vault'),
   openSource: path => request('questbook:open-source', path),
+  // Layout and turn commands return uniform stage geometry; task data is unchanged.
   windowAction: action => request('questbook:window', action),
   onChanged: callback => {
     if (typeof callback !== 'function') throw new TypeError('Ожидается функция.');

@@ -24,6 +24,103 @@
   let busy = false;
   let open = true;
   let noticeTimer;
+  let layoutReady = false;
+  let layoutBusy = false;
+  let layoutWork = null;
+  let shownOpen = true;
+  let shownRotated = false;
+  let bookAngle = 0;
+  let bookScale = 1;
+
+  function wantsRotation() { return view === 'board' && connected(); }
+  function bookTransform(angle, scale) { return `translate(-50%, -50%) rotate(${angle}deg) scale(${scale})`; }
+  function setBookTransform(angle, scale) {
+    bookAngle = angle;
+    bookScale = scale;
+    $('#book-stage').style.setProperty('--book-angle', `${angle}deg`);
+    $('#book-stage').style.setProperty('--book-scale', String(scale));
+  }
+  async function animateBook(angle, scale, duration) {
+    if (matchMedia('(prefers-reduced-motion: reduce)').matches) duration = 0;
+    if (!duration || Math.abs(bookAngle - angle) < .001 && Math.abs(bookScale - scale) < .0001) { setBookTransform(angle, scale); return; }
+    const animation = $('#book-stage').animate([
+      { transform: bookTransform(bookAngle, bookScale) },
+      { transform: bookTransform(angle, scale) }
+    ], { duration, easing: 'cubic-bezier(.4, 0, .2, 1)', fill: 'forwards' });
+    let timeout;
+    try {
+      // A minimized/hidden Electron window can pause animation frames.
+      await Promise.race([animation.finished.catch(() => {}), new Promise(resolve => { timeout = setTimeout(resolve, duration + 500); })]);
+    } finally { clearTimeout(timeout); setBookTransform(angle, scale); animation.cancel(); }
+  }
+  async function waitForWindow(layout) {
+    const fits = () => Math.abs(innerWidth - layout.width) <= 1 && Math.abs(innerHeight - layout.height) <= 1;
+    if (fits()) return;
+    await new Promise((resolve, reject) => {
+      const finish = () => { clearTimeout(timeout); removeEventListener('resize', resized); resolve(); };
+      const resized = () => { if (fits()) finish(); };
+      const timeout = setTimeout(() => { removeEventListener('resize', resized); if (fits()) resolve(); else reject(new Error('Окно не успело изменить размер.')); }, 1000);
+      addEventListener('resize', resized);
+      resized();
+    });
+  }
+  function applyWindowLayout(layout) {
+    shownOpen = layout.open;
+    shownRotated = layout.rotated;
+    if (layout.open) setBookTransform(layout.rotated ? 90 : 0, layout.scale);
+    else $('#cover-stage').style.setProperty('--cover-scale', String(layout.scale));
+    $('#book-stage').hidden = !layout.open;
+    $('#cover-stage').hidden = layout.open;
+  }
+  function requestBookLayout() {
+    if (!layoutReady || layoutWork || shownOpen === open && (!open || shownRotated === wantsRotation())) return layoutWork;
+    layoutBusy = true;
+    document.body.classList.add('book-turning');
+    $('[data-action="new-quest"]').disabled = true;
+    layoutWork = (async () => {
+      try {
+        // One controller drains the latest requested view; rapid clicks never overlap turns.
+        while (shownOpen !== open || open && shownRotated !== wantsRotation()) {
+          if (shownOpen !== open) {
+            const next = await api.windowAction(open ? { type: 'open-book', rotated: wantsRotation() } : 'close-book');
+            await waitForWindow(next);
+            applyWindowLayout(next);
+            continue;
+          }
+          const rotated = wantsRotation();
+          if (matchMedia('(prefers-reduced-motion: reduce)').matches) {
+            const next = await api.windowAction({ type: 'open-book', rotated });
+            await waitForWindow(next);
+            applyWindowLayout(next);
+            continue;
+          }
+          const current = await api.windowAction('layout');
+          await animateBook(bookAngle, Math.min(bookScale, current.turnScale), 130);
+          const prepared = await api.windowAction({ type: 'prepare-turn', rotated });
+          await waitForWindow(prepared);
+          await animateBook(rotated ? 90 : 0, prepared.scale, prepared.duration);
+          const finished = await api.windowAction({ type: 'finish-turn', rotated });
+          await waitForWindow(finished);
+          await animateBook(rotated ? 90 : 0, finished.scale, 130);
+          shownRotated = rotated;
+        }
+      } catch (error) {
+        notify(`Не удалось повернуть книгу: ${error.message || error}`, true);
+        try {
+          const recovery = await api.windowAction(open ? { type: 'open-book', rotated: wantsRotation() } : 'close-book');
+          await waitForWindow(recovery);
+          applyWindowLayout(recovery);
+        } catch { /* Keep readable content and allow another user action to retry. */ }
+      } finally {
+        layoutBusy = false;
+        document.body.classList.remove('book-turning');
+        render();
+        if (open && draft && dialogMode === 'draft' && !$('#editor').open) renderDraft();
+      }
+    })().finally(() => { layoutWork = null; });
+    return layoutWork;
+  }
+  function selectView(next) { view = next; requestBookLayout(); render(); }
 
   function today() { return timestampDay(new Date().toISOString()); }
   function timestampDay(value) {
@@ -77,6 +174,7 @@
     const changed = data.revision && state.revision !== data.revision;
     data = { ...emptyState, ...state, materials: state.materials || [], completions: state.completions || [] };
     normalizeSelection();
+    requestBookLayout();
     render();
     if (external && changed && draft) {
       draft.reloaded = true;
@@ -102,7 +200,7 @@
     document.querySelectorAll('[data-view]').forEach(button => button.setAttribute('aria-current', button.dataset.view === view ? 'page' : 'false'));
     $('#book').classList.toggle('board-mode', view === 'board' && connected());
     $('.pages').classList.toggle('wide', ['board', 'calendar'].includes(view));
-    $('[data-action="new-quest"]').disabled = !connected() || !data.projects.length;
+    $('[data-action="new-quest"]').disabled = layoutBusy || !connected() || !data.projects.length;
     $('#content').innerHTML = !connected() ? welcomeView() : view === 'history' ? historyView() : view === 'calendar' ? calendarView() : view === 'board' ? boardView() : journalView();
     scrollPositions.forEach(([key, top]) => { const element = [...$('#content').querySelectorAll('[data-scroll]')].find(item => item.dataset.scroll === key); if (element) element.scrollTop = top; });
     restoreFocus(focus);
@@ -303,20 +401,18 @@
   function showBook(isOpen) {
     open = isOpen;
     if (!isOpen && $('#editor').open) $('#editor').close();
-    $('#book').hidden = !isOpen;
-    $('#cover-stage').hidden = isOpen;
-    api.windowAction(isOpen ? 'open-book' : 'close-book');
-    if (isOpen && draft && dialogMode === 'draft') renderDraft();
+    requestBookLayout();
     renderFooter();
   }
   function moveMonth(offset) { const date = new Date(`${month}-01T12:00:00Z`); date.setUTCMonth(date.getUTCMonth() + offset); month = date.toISOString().slice(0, 7); render(); }
-  function selectQuest(id) { const quest = questById(id); if (!quest) return; selectedQuest = id; selectedProject = quest.projectId; expanded = selectedProject; view = 'journal'; hideDialog(); render(); }
+  function selectQuest(id) { const quest = questById(id); if (!quest) return; selectedQuest = id; selectedProject = quest.projectId; expanded = selectedProject; hideDialog(); selectView('journal'); }
 
   document.addEventListener('click', async event => {
     const button = event.target.closest('button');
     if (!button || button.disabled || busy && !['close-book', 'open-book', 'minimize', 'close'].includes(button.dataset.action)) return;
     const ds = button.dataset;
-    if (ds.view) { view = ds.view; render(); return; }
+    if (ds.view) { selectView(ds.view); return; }
+    if (layoutBusy && !['close-book', 'open-book', 'minimize', 'close', 'previous-page', 'next-page'].includes(ds.action)) return;
     if (ds.project) { expanded = expanded === ds.project ? null : ds.project; selectedProject = ds.project; selectedQuest = null; render(); return; }
     if (ds.about) { selectedProject = ds.about; selectedQuest = null; render(); return; }
     if (ds.quest) { selectQuest(ds.quest); return; }
@@ -354,8 +450,8 @@
       case 'resolve-draft': if (draft) { draft.revision = data.revision; draft.conflict = false; draft.reloaded = false; await saveDraft(); } break;
       case 'clear-history-filters': historyFilters = { query: '', projectId: '', from: '', to: '' }; render(); break;
       case 'clear-board-filters': boardFilters = { query: '', projectId: '', urgent: false }; render(); break;
-      case 'previous-page': { const views = ['journal', 'history', 'calendar', 'board']; view = views[(views.indexOf(view) + views.length - 1) % views.length]; render(); break; }
-      case 'next-page': { const views = ['journal', 'history', 'calendar', 'board']; view = views[(views.indexOf(view) + 1) % views.length]; render(); break; }
+      case 'previous-page': { const views = ['journal', 'history', 'calendar', 'board']; selectView(views[(views.indexOf(view) + views.length - 1) % views.length]); break; }
+      case 'next-page': { const views = ['journal', 'history', 'calendar', 'board']; selectView(views[(views.indexOf(view) + 1) % views.length]); break; }
       case 'previous-month': moveMonth(-1); break;
       case 'next-month': moveMonth(1); break;
       case 'today': selectedDay = today(); month = selectedDay.slice(0, 7); render(); break;
@@ -421,9 +517,16 @@
 
   async function initialize() {
     render();
-    if (!api) { notify('Не удалось подключить настольное приложение. Откройте Книгу проектов через её ярлык.', true); return; }
+    if (!api) { document.body.classList.add('layout-ready'); notify('Не удалось подключить настольное приложение. Откройте Книгу проектов через её ярлык.', true); return; }
     api.onChanged(state => { try { acceptState(state, true); } catch (error) { notify(`Ошибка обновления: ${error.message}`, true); } });
-    try { acceptState(await api.load()); } catch (error) { notify(`Не удалось загрузить хранилище: ${error.message || error}`, true); }
+    try {
+      const layout = await api.windowAction('layout');
+      await waitForWindow(layout);
+      applyWindowLayout(layout);
+      layoutReady = true;
+      document.body.classList.add('layout-ready');
+      acceptState(await api.load());
+    } catch (error) { document.body.classList.add('layout-ready'); notify(`Не удалось загрузить книгу: ${error.message || error}`, true); }
   }
   initialize();
 })();

@@ -8,6 +8,7 @@
   <link rel="stylesheet" href="styles.css">
 </head>
 <body>
+  <div id="book-stage" class="book-stage">
   <main id="book" class="book" aria-label="Книга проектов">
     <nav class="tabs bookmarks" aria-label="Закладки книги"><button data-view="journal" aria-current="page">Проекты</button><button data-view="history">История</button><button data-view="calendar">Календарь</button><button data-view="board">Доска</button></nav>
     <header class="book-bar"><span class="brand">Книга проектов</span><span class="bar-space"></span><button class="text-button add-button" data-action="new-quest" title="Добавить задание">+ Задание</button><button class="window-button" data-action="minimize" aria-label="Свернуть окно" title="Свернуть">−</button><button class="window-button" data-action="close" aria-label="Закрыть приложение" title="Закрыть приложение">×</button></header>
@@ -18,6 +19,7 @@
     </div>
     <div id="notice" class="notice" role="status" hidden></div>
   </main>
+  </div>
   <section id="cover-stage" class="cover-stage" hidden aria-label="Закрытая книга">
     <div class="cover"><div class="cover-bar"><span class="brand">Книга проектов</span><button class="window-button" data-action="minimize" aria-label="Свернуть окно">−</button><button class="window-button" data-action="close" aria-label="Закрыть приложение">×</button></div><div class="cover-border"><div class="book-emblem" aria-hidden="true"><span></span></div><h1>Книга<br>проектов</h1><p id="cover-summary">Твои дела. Свой темп.</p><button class="button primary" data-action="open-book">Открыть книгу →</button></div><div class="cover-spine" aria-hidden="true"></div></div>
   </section>
